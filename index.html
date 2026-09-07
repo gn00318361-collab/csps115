@@ -34,6 +34,7 @@
   .field-label{display:block;font-size:13px;font-weight:700;color:#555;margin-bottom:8px;width:100%}
   .info-bar{background:#fff8e1;border-left:4px solid #f9a825;padding:10px 12px;border-radius:0 8px 8px 0;font-size:12px;color:#666;margin-bottom:14px;line-height:1.5}
   .info-bar strong{color:#333}
+  .version-note{background:#fff3cd;border:1px solid #f7d774;color:#7a5a00;border-radius:10px;padding:10px 12px;font-size:13px;font-weight:700;margin:0 0 12px}
 
   .big-btn{width:100%;padding:15px;border:none;border-radius:12px;color:#fff;font-size:17px;font-weight:700;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.15);transition:opacity .2s;margin-top:4px}
   .big-btn:disabled{opacity:.35;cursor:not-allowed}
@@ -106,6 +107,9 @@
   .admin-grade-bar::-webkit-scrollbar{display:none}
   .ag-btn{flex-shrink:0;padding:10px 18px;border-radius:20px;border:2px solid #ddd;background:#fff;font-size:14px;font-weight:600;color:#888;cursor:pointer;transition:all .15s}
   .ag-btn.on{border-color:#e67e22;background:#e67e22;color:#fff}
+  .admin-period-bar{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+  .ap-btn{padding:12px 8px;border:2px solid #ddd;border-radius:10px;background:#fff;font-size:15px;font-weight:700;color:#555;cursor:pointer;text-align:center;transition:all .15s}
+  .ap-btn.on{border-color:#e67e22;background:#fef5ed;color:#e67e22}
 
   .teacher-tabs{display:flex;gap:6px;overflow-x:auto;padding:4px 0 12px;scrollbar-width:none}
   .teacher-tabs::-webkit-scrollbar{display:none}
@@ -218,8 +222,21 @@
 
   <!-- 管理者 -->
   <div class="screen" id="scrAdmin">
+    <div class="version-note">更新版：管理者可直接查看評分明細，並可切換上午／下午評分人員。</div>
     <div class="admin-grade-bar" id="aGradeBar"></div>
     <button class="act-btn copy" style="margin-bottom:12px" onclick="syncCloud()">🔄 從雲端同步最新資料</button>
+
+    <div style="margin-top:12px">
+      <button class="act-btn" style="background:#f0f0f0;color:#666" onclick="toggleDetail()">📋 顯示 / 隱藏評分明細</button>
+    </div>
+    <div id="aDetailSection" style="display:block">
+      <div class="score-card">
+        <h3>評分明細</h3>
+        <div class="admin-period-bar" id="aPeriodGrid"></div>
+        <div class="teacher-tabs" id="aTeacherTabs" style="margin-top:12px"></div>
+        <div id="aInputArea"></div>
+      </div>
+    </div>
 
     <div class="score-card">
       <h3>五年級選修課（4組，每組5人）</h3>
@@ -238,14 +255,6 @@
         <button class="act-btn orange" onclick="aCopyStats()">📋 複製統計結果</button>
         <button class="act-btn copy" onclick="aExportAll()">📊 匯出全年級</button>
       </div>
-    </div>
-
-    <div style="margin-top:12px">
-      <button class="act-btn" style="background:#f0f0f0;color:#666" onclick="toggleDetail()">📋 查看 / 隱藏評分明細</button>
-    </div>
-    <div id="aDetailSection" style="display:none">
-      <div class="teacher-tabs" id="aTeacherTabs" style="margin-top:12px"></div>
-      <div id="aInputArea"></div>
     </div>
 
     <div class="act-btns" style="margin-top:14px">
@@ -304,7 +313,7 @@ function toggleDetail(){
 async function syncCloud(){
   showToast('同步中...');
   await cloudLoad();
-  aEnsure();aRenderTT();aRenderInput();aRenderStats();
+  aEnsure();aRenderPeriod();aRenderTT();aRenderInput();aRenderStats();
 }
 
 const SCORE_JUDGES=[
@@ -338,7 +347,7 @@ const FIFTH_ELECTIVES=[
 const MAX=10,GRADES=Object.keys(TEACHERS);
 
 let role=null;
-let aCurGrade=GRADES[0],aCurTeacher=0;
+let aCurGrade=GRADES[0],aCurTeacher=0,aPeriod=SCORE_PERIODS[0];
 let aClassCounts={},aData={},aTimestamps={},aNotes={};
 let tGrade=null,tPeriod=null,tTeacher=null,tClassCount=10,tCurClass=0;
 let tScores=[],tNotes=[];
@@ -479,9 +488,9 @@ function shareLine(text){const t=encodeURIComponent(text);const isM=/iPhone|iPad
 
 // ===== 管理者 =====
 async function initAdmin(){
-  aCurGrade=GRADES[0];aCurTeacher=0;
+  aCurGrade=GRADES[0];aPeriod=SCORE_PERIODS[0];aCurTeacher=0;
   const bar=document.getElementById('aGradeBar');bar.innerHTML='';
-  GRADES.forEach(g=>{const b=document.createElement('button');b.className='ag-btn'+(g===aCurGrade?' on':'');b.textContent=g;b.onclick=()=>{aCurGrade=g;aCurTeacher=0;aRefresh();};bar.appendChild(b);});
+  GRADES.forEach(g=>{const b=document.createElement('button');b.className='ag-btn'+(g===aCurGrade?' on':'');b.textContent=g;b.onclick=()=>{aCurGrade=g;aPeriod=SCORE_PERIODS[0];aCurTeacher=0;aRefresh();};bar.appendChild(b);});
   renderElectives();
   await cloudLoad();
   aRefresh();
@@ -489,7 +498,7 @@ async function initAdmin(){
 function aRefresh(){
   document.querySelectorAll('.ag-btn').forEach(b=>b.classList.toggle('on',b.textContent===aCurGrade));
   const cntEl=document.getElementById('aCntVal');if(cntEl)cntEl.textContent=aClassCounts[aCurGrade];
-  aEnsure();aRenderTT();aRenderInput();aRenderStats();
+  aEnsure();aRenderPeriod();aRenderTT();aRenderInput();aRenderStats();
 }
 function aEnsure(){
   const g=aCurGrade,cnt=aClassCounts[g];
@@ -503,9 +512,20 @@ function aEnsure(){
   });
 }
 function aAdjCount(d){aClassCounts[aCurGrade]=Math.max(1,Math.min(15,aClassCounts[aCurGrade]+d));aEnsure();aRefresh();saveLS();}
+function aRenderPeriod(){
+  const w=document.getElementById('aPeriodGrid');if(!w)return;w.innerHTML='';
+  SCORE_PERIODS.forEach(p=>{
+    const btn=document.createElement('button');btn.className='ap-btn'+(p===aPeriod?' on':'');btn.textContent=p;
+    btn.onclick=()=>{aPeriod=p;const first=TEACHERS[aCurGrade].findIndex(t=>t.startsWith(p+' '));aCurTeacher=first>=0?first:0;aRenderPeriod();aRenderTT();aRenderInput();};
+    w.appendChild(btn);
+  });
+  const first=TEACHERS[aCurGrade].findIndex(t=>t.startsWith(aPeriod+' '));
+  if(first>=0&&!TEACHERS[aCurGrade][aCurTeacher].startsWith(aPeriod+' '))aCurTeacher=first;
+}
 function aRenderTT(){
   const w=document.getElementById('aTeacherTabs');w.innerHTML='';
   TEACHERS[aCurGrade].forEach((t,i)=>{
+    if(!t.startsWith(aPeriod+' '))return;
     const btn=document.createElement('button');btn.className='tt'+(i===aCurTeacher?' on':'');btn.textContent=t;
     if(aTDone(t)&&i!==aCurTeacher)btn.classList.add('done');
     btn.onclick=()=>{aCurTeacher=i;aRenderTT();aRenderInput();};w.appendChild(btn);
@@ -515,7 +535,7 @@ function aTDone(t){const a=aData[aCurGrade][t];return a&&a.every(cls=>hasAnyScor
 function aRenderInput(){
   const teacher=TEACHERS[aCurGrade][aCurTeacher],cnt=aClassCounts[aCurGrade],scores=aData[aCurGrade][teacher];
   const ts=aTimestamps[aCurGrade]&&aTimestamps[aCurGrade][teacher];
-  let h=`<div class="score-card"><h3>${teacher}的評分</h3>${ts?`<div class="submit-time">📌 提交時間：${ts}</div>`:''}<table class="input-table"><tr><th>班級</th>`;
+  let h=`<h3 style="margin-top:14px">${teacher}的評分</h3>${ts?`<div class="submit-time">📌 提交時間：${ts}</div>`:''}<table class="input-table"><tr><th>班級</th>`;
   CRITERIA.forEach(c=>h+=`<th>${c.name}</th>`);h+=`<th>總分</th><th>備註</th></tr>`;
   const notes=aNotes[aCurGrade]&&aNotes[aCurGrade][teacher]?aNotes[aCurGrade][teacher]:[];
   for(let i=0;i<cnt;i++){
@@ -526,7 +546,7 @@ function aRenderInput(){
     h+=`<td class="row-total-admin">${total||'-'}</td>`;
     h+=`<td><input type="text" class="note-input" style="width:70px;min-height:auto;padding:4px 6px;font-size:11px" value="${note.replace(/"/g,'&quot;')}" placeholder="-" oninput="aSetNote('${teacher}',${i},this)"></td></tr>`;
   }
-  h+=`</table></div>`;document.getElementById('aInputArea').innerHTML=h;
+  h+=`</table>`;document.getElementById('aInputArea').innerHTML=h;
 }
 function aSetNote(teacher,ci,el){if(!aNotes[aCurGrade])aNotes[aCurGrade]={};if(!aNotes[aCurGrade][teacher])aNotes[aCurGrade][teacher]=[];while(aNotes[aCurGrade][teacher].length<=ci)aNotes[aCurGrade][teacher].push('');aNotes[aCurGrade][teacher][ci]=el.value.trim();el.classList.toggle('has-text',!!el.value.trim());saveLS();}
 function aSet(teacher,ci,key,el){
