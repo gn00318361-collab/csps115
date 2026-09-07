@@ -129,11 +129,6 @@
 
   .stats-section{margin-top:18px}
   .stats-title{font-size:16px;font-weight:700;color:#333;margin-bottom:12px}
-  .elective-grid{display:grid;grid-template-columns:1fr;gap:10px}
-  .elective-item{border:1px solid #eee;border-radius:10px;padding:10px;background:#fafafa}
-  .elective-title{font-size:14px;font-weight:800;color:#333;margin-bottom:6px}
-  .elective-names{font-size:13px;line-height:1.6;color:#555}
-
   .submit-time{font-size:12px;color:#27ae60;background:#eafaf1;padding:6px 10px;border-radius:8px;margin-bottom:10px;border-left:3px solid #27ae60}
 
   .note-wrap{margin-top:10px;padding-top:10px;border-top:1px dashed #eee}
@@ -238,14 +233,6 @@
       </div>
     </div>
 
-    <div class="score-card">
-      <h3>五年級選修課（4組，每組5人）</h3>
-      <div class="elective-grid" id="electiveList"></div>
-      <div class="act-btns">
-        <button class="act-btn copy" onclick="copyElectives()">📋 複製五年級選修課名單</button>
-      </div>
-    </div>
-
     <div class="stats-section" id="aStatsSection" style="display:none">
       <div class="stats-title">📊 統計結果</div>
       <div class="res-card">
@@ -271,13 +258,41 @@
 // 請將下方 URL 替換為你的 Google Apps Script 部署網址
 const API_URL = 'https://script.google.com/macros/s/AKfycbyBEBxtA64Uvj5KPhVX4OpyOVxpfZaWipfxycOMHO2RE3W3j9ZzazedjAWUAj5131Kw/exec';
 
+const LEGACY_SCORE_MAP={rhythm:'dec',clean:'tidy',order:'manner',cheer:'spirit',exercise:'other'};
+function normalizeScoreRow(row){
+  const src=row||{},out={...src};
+  CRITERIA.forEach(c=>{
+    const legacyKey=LEGACY_SCORE_MAP[c.key];
+    const raw=out[c.key]!==undefined?out[c.key]:(legacyKey&&src[legacyKey]!==undefined?src[legacyKey]:0);
+    out[c.key]=Number(raw)||0;
+  });
+  return out;
+}
+function normalizeScores(scores,cnt){
+  const src=Array.isArray(scores)?scores:[];
+  const len=cnt||src.length;
+  const out=[];
+  for(let i=0;i<len;i++)out.push(normalizeScoreRow(src[i]));
+  return out;
+}
+function withLegacyKeys(row){
+  const out=normalizeScoreRow(row);
+  out.dec=out.rhythm;
+  out.tidy=out.clean;
+  out.manner=out.order;
+  out.spirit=out.cheer;
+  out.other=out.exercise;
+  return out;
+}
+
 async function cloudSubmit(grade, teacher, scores, notes) {
   if (!API_URL || API_URL === 'YOUR_GOOGLE_APPS_SCRIPT_URL') return;
+  const normalizedScores=normalizeScores(scores, scores.length);
   try {
     await fetch(API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain' },
-      body: JSON.stringify({ action: 'submit', grade, teacher, scores, notes })
+      body: JSON.stringify({ action: 'submit', grade, teacher, scores: normalizedScores.map(withLegacyKeys), scoresV2: normalizedScores, notes, criteriaVersion: '115-spirit-7' })
     });
     showToast('已同步到雲端');
   } catch (e) { showToast('雲端同步失敗，資料已存本機'); }
@@ -294,7 +309,7 @@ async function cloudLoad() {
         Object.keys(json.data[g]).forEach(t => {
           if (!TEACHERS[g].includes(t)) return;
           const remote = json.data[g][t];
-          aData[g][t] = remote.scores;
+          aData[g][t] = normalizeScores(remote.scoresV2 || remote.scores, FIXED_COUNTS[g]);
           if (remote.notes) aNotes[g][t] = remote.notes;
           if (remote.time) aTimestamps[g][t] = remote.time;
         });
@@ -338,12 +353,6 @@ const CRITERIA=[
   {key:"entrance",name:"進場"},
   {key:"exercise",name:"大會操"}
 ];
-const FIFTH_ELECTIVES=[
-  {course:"寵物烏托邦",students:["陳品睿","李依珊","曾姿綺","林侑澄","李苡安"]},
-  {course:"身體有戲",students:["石蕓禎","邱郅崴","連永真","林芝宇","鄭祺叡"]},
-  {course:"社會設計",students:["劉勝心","郭柏妤","黃苡喬","蔣和甫","陳芷緁"]},
-  {course:"人權視界",students:["陳約翰","王思元","黃彥綸","廖聿遴","簡嘉辰"]}
-];
 const MAX=10,GRADES=Object.keys(TEACHERS);
 
 let role=null;
@@ -359,18 +368,6 @@ function show(id){document.querySelectorAll('.screen').forEach(s=>s.classList.re
 function setHeader(mode){const h=document.getElementById('mainHeader');h.className='header '+(mode==='admin'?'admin-mode':'teacher-mode');h.querySelector('.sub').textContent=mode==='admin'?'晴天精神錦標分數彙整（管理者）':'晴天精神錦標評分系統';}
 function pickRole(r){role=r;if(r==='teacher'){var pw=prompt('請輸入評分委員密碼：');if(pw!=='csps115'){alert('密碼錯誤！');return;}setHeader('teacher');initTeacherLogin();show('scrTeacherLogin');}else{var pw=prompt('請輸入管理者密碼：');if(pw!=='csps2026'){alert('密碼錯誤！');return;}setHeader('admin');initAdmin();show('scrAdmin');}}
 function goHome(){setHeader('teacher');show('scrRole');}
-
-function renderElectives(){
-  const el=document.getElementById('electiveList');
-  if(!el)return;
-  el.innerHTML=FIFTH_ELECTIVES.map(g=>`<div class="elective-item"><div class="elective-title">✔️ ${g.course}</div><div class="elective-names">${g.students.join('、')}</div></div>`).join('');
-}
-function getElectiveText(){
-  let text='五年級選修課（4組，每組5人）\n';
-  FIFTH_ELECTIVES.forEach(g=>{text+=`✔️${g.course}：${g.students.join('、')}\n`;});
-  return text.trim();
-}
-function copyElectives(){doCopy(getElectiveText());}
 
 // ===== 老師登入 =====
 function initTeacherLogin(){
@@ -426,9 +423,9 @@ function tRenderTabs(){
   document.getElementById('tProgress').textContent=`已完成 ${done}/${tClassCount} 班`;
   document.getElementById('tSubmitBtn').disabled=done<tClassCount;
 }
-function scoreTotal(s){return CRITERIA.reduce((sum,c)=>sum+(Number(s[c.key])||0),0);}
-function hasAnyScore(s){return CRITERIA.some(c=>(Number(s[c.key])||0)>0);}
-function displayScore(s,c){const v=Number(s[c.key])||0;return v||'';}
+function scoreTotal(s){const ns=normalizeScoreRow(s);return CRITERIA.reduce((sum,c)=>sum+(Number(ns[c.key])||0),0);}
+function hasAnyScore(s){const ns=normalizeScoreRow(s);return CRITERIA.some(c=>(Number(ns[c.key])||0)>0);}
+function displayScore(s,c){const ns=normalizeScoreRow(s);const v=Number(ns[c.key])||0;return v||'';}
 function tDone(i){return hasAnyScore(tScores[i]);}
 function tRenderCard(){
   const s=tScores[tCurClass];
@@ -457,6 +454,7 @@ function tGoBack(){if(tScores.some((_,i)=>tDone(i))&&!confirm('返回將清除�
 function tSubmit(){
   const u=tScores.findIndex((_,i)=>!tDone(i));
   if(u>=0){showToast(`${u+1}班 尚有未評項目`);tCurClass=u;tRenderTabs();tRenderCard();return;}
+  tScores=normalizeScores(tScores,tClassCount);
   aClassCounts[tGrade]=tClassCount;if(!aData[tGrade])aData[tGrade]={};
   aData[tGrade][tTeacher]=JSON.parse(JSON.stringify(tScores));aNotes[tGrade][tTeacher]=[...tNotes];aTimestamps[tGrade][tTeacher]=new Date().toLocaleString('zh-TW');saveLS();
   cloudSubmit(tGrade, tTeacher, tScores, tNotes);
@@ -491,7 +489,6 @@ async function initAdmin(){
   aCurGrade=GRADES[0];aPeriod=SCORE_PERIODS[0];aCurTeacher=0;
   const bar=document.getElementById('aGradeBar');bar.innerHTML='';
   GRADES.forEach(g=>{const b=document.createElement('button');b.className='ag-btn'+(g===aCurGrade?' on':'');b.textContent=g;b.onclick=()=>{aCurGrade=g;aPeriod=SCORE_PERIODS[0];aCurTeacher=0;aRefresh();};bar.appendChild(b);});
-  renderElectives();
   await cloudLoad();
   aRefresh();
 }
@@ -503,11 +500,12 @@ function aRefresh(){
 function aEnsure(){
   const g=aCurGrade,cnt=aClassCounts[g];
   TEACHERS[g].forEach(t=>{
-    if(!aData[g][t]||aData[g][t].length!==cnt){
-      const old=aData[g][t]||[];aData[g][t]=[];
-      for(let i=0;i<cnt;i++){const o=old[i]?{...old[i]}:{};CRITERIA.forEach(c=>{if(o[c.key]===undefined)o[c.key]=0;});aData[g][t].push(o);}
+    const old=Array.isArray(aData[g][t])?aData[g][t]:[];
+    if(old.length!==cnt){
+      aData[g][t]=[];
+      for(let i=0;i<cnt;i++)aData[g][t].push(normalizeScoreRow(old[i]));
     }else{
-      aData[g][t].forEach(cls=>CRITERIA.forEach(c=>{if(cls[c.key]===undefined)cls[c.key]=0;}));
+      aData[g][t]=old.map(cls=>normalizeScoreRow(cls));
     }
   });
 }
@@ -539,10 +537,10 @@ function aRenderInput(){
   CRITERIA.forEach(c=>h+=`<th>${c.name}</th>`);h+=`<th>總分</th><th>備註</th></tr>`;
   const notes=aNotes[aCurGrade]&&aNotes[aCurGrade][teacher]?aNotes[aCurGrade][teacher]:[];
   for(let i=0;i<cnt;i++){
-    const s=scores[i],total=scoreTotal(s);
+    const s=normalizeScoreRow(scores[i]),total=scoreTotal(s);
     const note=notes[i]||'';
     h+=`<tr><td class="cls-label">${i+1}班</td>`;
-    CRITERIA.forEach(c=>{const v=s[c.key]||'';h+=`<td><input type="number" class="score-input${v?' filled':''}" min="0" max="${MAX}" value="${v||''}" inputmode="numeric" pattern="[0-9]*" onfocus="this.select()" oninput="aSet('${teacher}',${i},'${c.key}',this)" onchange="aSet('${teacher}',${i},'${c.key}',this)"></td>`;});
+    CRITERIA.forEach(c=>{const v=displayScore(s,c);h+=`<td><input type="number" class="score-input${v?' filled':''}" min="0" max="${MAX}" value="${v||''}" inputmode="numeric" pattern="[0-9]*" onfocus="this.select()" oninput="aSet('${teacher}',${i},'${c.key}',this)" onchange="aSet('${teacher}',${i},'${c.key}',this)"></td>`;});
     h+=`<td class="row-total-admin">${total||'-'}</td>`;
     h+=`<td><input type="text" class="note-input" style="width:70px;min-height:auto;padding:4px 6px;font-size:11px" value="${note.replace(/"/g,'&quot;')}" placeholder="-" oninput="aSetNote('${teacher}',${i},this)"></td></tr>`;
   }
