@@ -546,8 +546,8 @@ function aRenderInput(){
   const teacher=TEACHERS[aCurGrade][aCurTeacher],cnt=aClassCounts[aCurGrade],scores=aData[aCurGrade][teacher];
   const criteria=criteriaForGrade(aCurGrade);
   const ts=aTimestamps[aCurGrade]&&aTimestamps[aCurGrade][teacher];
-  let h=`<h3 style="margin-top:14px">${teacher}的評分</h3>${ts?`<div class="submit-time">📌 提交時間：${ts}</div>`:''}<table class="input-table"><tr><th>班級</th>`;
-  criteria.forEach(c=>h+=`<th>${c.name}</th>`);h+=`<th>總分</th><th>備註</th></tr>`;
+  let h=`<h3 style="margin-top:14px">${teacher}的評分</h3><div class="info-bar"><strong>${aCurGrade}紙本欄位</strong><br>${criteria.map(c=>c.name).join('、')}；每格10分，總分${totalMaxForGrade(aCurGrade)}。</div>${ts?`<div class="submit-time">📌 提交時間：${ts}</div>`:''}<table class="input-table"><tr><th>班級</th>`;
+  criteria.forEach(c=>h+=`<th>${c.name}</th>`);h+=`<th>總分${totalMaxForGrade(aCurGrade)}</th><th>備註</th></tr>`;
   const notes=aNotes[aCurGrade]&&aNotes[aCurGrade][teacher]?aNotes[aCurGrade][teacher]:[];
   for(let i=0;i<cnt;i++){
     const s=normalizeScoreRow(scores[i]),total=scoreTotal(s,aCurGrade);
@@ -574,7 +574,7 @@ function aRenderStats(){
   for(let i=0;i<cnt;i++){const tt=[];ts.forEach(t=>{const s=aData[g][t][i];tt.push(scoreTotal(s,g));});const avg=tt.reduce((a,b)=>a+b,0)/ts.length;res.push({cls:i+1,tt,avg});}
   const sorted=[...res].sort((a,b)=>b.avg-a.avg);let rk=1;sorted.forEach((it,i)=>{if(i>0&&it.avg<sorted[i-1].avg)rk=i+1;it.rank=rk;});
   sorted.forEach(s=>res[s.cls-1].rank=s.rank);
-  let h=`<tr><th>班級</th>`;ts.forEach(t=>h+=`<th>${t.replace('老師','').replace('主任','')}</th>`);h+=`<th>平均</th><th>名次</th><th>備註</th></tr>`;
+  let h=`<tr><th>班級</th>`;ts.forEach(t=>h+=`<th>${t.replace('老師','').replace('主任','')}</th>`);h+=`<th>平均<br>滿分${totalMaxForGrade(g)}</th><th>名次</th><th>備註</th></tr>`;
   res.forEach(r=>{const rc=r.rank<=3?` rank-${r.rank}`:'';h+=`<tr><td><strong>${r.cls}班</strong></td>`;r.tt.forEach(t=>h+=`<td>${t||'-'}</td>`);h+=`<td class="highlight">${r.avg.toFixed(1)}</td><td class="${rc}">${r.rank}</td>`;
     const allNotes=[];ts.forEach(t=>{const n=aNotes[g]&&aNotes[g][t]&&aNotes[g][t][r.cls-1];if(n)allNotes.push(n);});
     h+=`<td style="font-size:11px;color:#e74c3c;max-width:80px;white-space:normal">${allNotes.length?allNotes.join('；'):'-'}</td></tr>`;});
@@ -585,7 +585,7 @@ function aGetText(grade){
   const res=[];for(let i=0;i<cnt;i++){const tt=[];ts.forEach(t=>{const s=aData[g][t][i];tt.push(scoreTotal(s,g));});res.push({cls:i+1,tt,avg:tt.reduce((a,b)=>a+b,0)/ts.length});}
   const sorted=[...res].sort((a,b)=>b.avg-a.avg);let rk=1;sorted.forEach((it,i)=>{if(i>0&&it.avg<sorted[i-1].avg)rk=i+1;it.rank=rk;});
   sorted.forEach(s=>res[s.cls-1].rank=s.rank);
-  let t=`📊 115學年度運動會\n${g} 晴天精神錦標評分統計\n━━━━━━━━━━\n班級 | `;ts.forEach(tc=>t+=`${tc.replace('老師','').replace('主任','')} | `);t+=`平均 | 名次\n──────────\n`;
+  let t=`📊 115學年度運動會\n${g} 晴天精神錦標評分統計（滿分${totalMaxForGrade(g)}）\n━━━━━━━━━━\n班級 | `;ts.forEach(tc=>t+=`${tc.replace('老師','').replace('主任','')} | `);t+=`平均 | 名次\n──────────\n`;
   res.forEach(r=>{t+=`${r.cls}班 | `;r.tt.forEach(v=>t+=`${v} | `);t+=`${r.avg.toFixed(1)} | 第${r.rank}名\n`;});
   const allNotes=[];for(let i=0;i<cnt;i++){const cn=[];ts.forEach(tc=>{const n=aNotes[g]&&aNotes[g][tc]&&aNotes[g][tc][i];if(n)cn.push(n);});if(cn.length)allNotes.push(`  ${i+1}班：${cn.join('；')}`);}
   if(allNotes.length){t+=`━━━━━━━━━━\n⚠️ 違規備註：\n${allNotes.join('\n')}\n`;}
