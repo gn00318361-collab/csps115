@@ -261,7 +261,7 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbyBEBxtA64Uvj5KPhVX4Opy
 const LEGACY_SCORE_MAP={rhythm:'dec',clean:'tidy',order:'manner',cheer:'spirit',exercise:'other'};
 function normalizeScoreRow(row){
   const src=row||{},out={...src};
-  CRITERIA.forEach(c=>{
+  ALL_CRITERIA.forEach(c=>{
     const legacyKey=LEGACY_SCORE_MAP[c.key];
     const raw=out[c.key]!==undefined?out[c.key]:(legacyKey&&src[legacyKey]!==undefined?src[legacyKey]:0);
     out[c.key]=Number(raw)||0;
@@ -337,22 +337,31 @@ const SCORE_JUDGES=[
 ];
 const SCORE_PERIODS=["上午","下午"];
 const TEACHERS={
-  "一年級":SCORE_JUDGES,
-  "二年級":SCORE_JUDGES,
   "三年級":SCORE_JUDGES,
   "四年級":SCORE_JUDGES,
   "五年級":SCORE_JUDGES,
   "六年級":SCORE_JUDGES
 };
-const CRITERIA=[
+const ALL_CRITERIA=[
   {key:"rhythm",name:"韻律"},
-  {key:"team",name:"團競"},
+  {key:"team",name:"團競精神"},
   {key:"clean",name:"休息區整潔"},
   {key:"order",name:"休息區秩序"},
   {key:"cheer",name:"啦啦隊"},
   {key:"entrance",name:"進場"},
   {key:"exercise",name:"大會操"}
 ];
+const CRITERIA_BY_GRADE={
+  "三年級":["rhythm","team","clean","order"],
+  "四年級":["cheer","rhythm","team","clean","order"],
+  "五年級":["entrance","exercise","rhythm","team","clean","order"],
+  "六年級":["entrance","exercise","rhythm","team","clean","order"]
+};
+function criteriaForGrade(grade){
+  const keys=CRITERIA_BY_GRADE[grade]||ALL_CRITERIA.map(c=>c.key);
+  return keys.map(k=>ALL_CRITERIA.find(c=>c.key===k)).filter(Boolean);
+}
+function totalMaxForGrade(grade){return criteriaForGrade(grade).length*MAX;}
 const MAX=10,GRADES=Object.keys(TEACHERS);
 
 let role=null;
@@ -361,7 +370,7 @@ let aClassCounts={},aData={},aTimestamps={},aNotes={};
 let tGrade=null,tPeriod=null,tTeacher=null,tClassCount=10,tCurClass=0;
 let tScores=[],tNotes=[];
 
-const FIXED_COUNTS={"一年級":9,"二年級":8,"三年級":9,"四年級":9,"五年級":10,"六年級":10};
+const FIXED_COUNTS={"三年級":9,"四年級":9,"五年級":10,"六年級":10};
 GRADES.forEach(g=>{aClassCounts[g]=FIXED_COUNTS[g];aData[g]={};aTimestamps[g]={};aNotes[g]={};TEACHERS[g].forEach(t=>{aData[g][t]=null;aTimestamps[g][t]=null;aNotes[g][t]=null;});});
 
 function show(id){document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));document.getElementById(id).classList.add('active');}
@@ -410,9 +419,10 @@ function tAdjCount(d){tClassCount=Math.max(1,Math.min(15,tClassCount+d));documen
 // ===== 老師評分 =====
 function tStartScoring(){
   if(!tGrade||!tTeacher)return;
-  tScores=[];tNotes=[];for(let i=0;i<tClassCount;i++){const o={};CRITERIA.forEach(c=>o[c.key]=0);tScores.push(o);tNotes.push('');}
+  const criteria=criteriaForGrade(tGrade);
+  tScores=[];tNotes=[];for(let i=0;i<tClassCount;i++){const o={};criteria.forEach(c=>o[c.key]=0);tScores.push(o);tNotes.push('');}
   tCurClass=0;show('scrTeacherScore');
-  document.getElementById('tInfoBar').innerHTML=`<strong>${tTeacher}</strong>｜${tGrade}（${tClassCount} 班）<br>晴天精神錦標評分：韻律、團競、休息區整潔、休息區秩序、啦啦隊、進場、大會操`;
+  document.getElementById('tInfoBar').innerHTML=`<strong>${tTeacher}</strong>｜${tGrade}（${tClassCount} 班）<br>晴天精神錦標評分：${criteria.map(c=>c.name).join('、')}（總分${totalMaxForGrade(tGrade)}）`;
   tRenderTabs();tRenderCard();
 }
 function tRenderTabs(){
@@ -423,16 +433,16 @@ function tRenderTabs(){
   document.getElementById('tProgress').textContent=`已完成 ${done}/${tClassCount} 班`;
   document.getElementById('tSubmitBtn').disabled=done<tClassCount;
 }
-function scoreTotal(s){const ns=normalizeScoreRow(s);return CRITERIA.reduce((sum,c)=>sum+(Number(ns[c.key])||0),0);}
-function hasAnyScore(s){const ns=normalizeScoreRow(s);return CRITERIA.some(c=>(Number(ns[c.key])||0)>0);}
+function scoreTotal(s,grade){const ns=normalizeScoreRow(s);return criteriaForGrade(grade||tGrade||aCurGrade).reduce((sum,c)=>sum+(Number(ns[c.key])||0),0);}
+function hasAnyScore(s,grade){const ns=normalizeScoreRow(s);return criteriaForGrade(grade||tGrade||aCurGrade).some(c=>(Number(ns[c.key])||0)>0);}
 function displayScore(s,c){const ns=normalizeScoreRow(s);const v=Number(ns[c.key])||0;return v||'';}
-function tDone(i){return hasAnyScore(tScores[i]);}
+function tDone(i){return hasAnyScore(tScores[i],tGrade);}
 function tRenderCard(){
   const s=tScores[tCurClass];
   let h=`<div class="score-card"><h3>${tGrade} ${tCurClass+1}班</h3>`;
-  CRITERIA.forEach(c=>{h+=`<div class="row"><span class="row-label">${c.name}</span><div class="star-group">`;for(let n=1;n<=MAX;n++)h+=`<button class="star${s[c.key]>=n?' on':''}" onclick="tSet('${c.key}',${n})">${n}</button>`;h+=`</div><span class="row-score">${s[c.key]||'-'}</span></div>`;});
-  const total=scoreTotal(s);
-  h+=`<div class="total-row"><span class="total-label">總分</span><span class="total-val">${total||'-'}</span></div>`;
+  criteriaForGrade(tGrade).forEach(c=>{h+=`<div class="row"><span class="row-label">${c.name}</span><div class="star-group">`;for(let n=1;n<=MAX;n++)h+=`<button class="star${s[c.key]>=n?' on':''}" onclick="tSet('${c.key}',${n})">${n}</button>`;h+=`</div><span class="row-score">${s[c.key]||'-'}</span></div>`;});
+  const total=scoreTotal(s,tGrade);
+  h+=`<div class="total-row"><span class="total-label">總分（滿分${totalMaxForGrade(tGrade)}）</span><span class="total-val">${total||'-'}</span></div>`;
   h+=`<div class="note-wrap"><div class="note-label">⚠️ 違規備註</div><textarea class="note-input${tNotes[tCurClass]?' has-text':''}" placeholder="如有違規事項請在此備註（非必填）" oninput="tSetNote(this)">${tNotes[tCurClass]||''}</textarea></div>`;
   if(tDone(tCurClass)&&tCurClass<tClassCount-1){
     h+=`<button onclick="tNextClass()" style="width:100%;padding:14px;margin-top:12px;border:none;border-radius:10px;background:linear-gradient(135deg,#4a90d9,#357abd);color:#fff;font-size:16px;font-weight:700;cursor:pointer;box-shadow:0 3px 10px rgba(74,144,217,0.3)">下一班 →</button>`;
@@ -461,20 +471,22 @@ function tSubmit(){
   show('scrTeacherResult');document.getElementById('tResSub').innerHTML=`${tTeacher}｜${tGrade}<br><span style="font-size:12px;color:#27ae60">評分已自動同步到雲端</span>`;tRenderResult();
 }
 function tRenderResult(){
-  const tots=tScores.map((s,i)=>({cls:i+1,s,total:scoreTotal(s)}));
+  const criteria=criteriaForGrade(tGrade);
+  const tots=tScores.map((s,i)=>({cls:i+1,s,total:scoreTotal(s,tGrade)}));
   tots.sort((a,b)=>b.total-a.total);let r=1;tots.forEach((it,i)=>{if(i>0&&it.total<tots[i-1].total)r=i+1;it.rank=r;});
   const d=[...tots].sort((a,b)=>a.cls-b.cls);
-  let h=`<tr><th>班級</th>`;CRITERIA.forEach(c=>h+=`<th>${c.name}</th>`);h+=`<th>總分</th><th>名次</th><th>備註</th></tr>`;
-  d.forEach(x=>{const rc=x.rank<=3?` rank-${x.rank}`:'';const note=tNotes[x.cls-1]||'';h+=`<tr><td><strong>${x.cls}班</strong></td>`;CRITERIA.forEach(c=>h+=`<td>${displayScore(x.s,c)||'-'}</td>`);h+=`<td class="highlight">${x.total}</td><td class="${rc}">${x.rank}</td><td style="font-size:11px;color:#e74c3c;max-width:80px;white-space:normal">${note||'-'}</td></tr>`;});
+  let h=`<tr><th>班級</th>`;criteria.forEach(c=>h+=`<th>${c.name}</th>`);h+=`<th>總分</th><th>名次</th><th>備註</th></tr>`;
+  d.forEach(x=>{const rc=x.rank<=3?` rank-${x.rank}`:'';const note=tNotes[x.cls-1]||'';h+=`<tr><td><strong>${x.cls}班</strong></td>`;criteria.forEach(c=>h+=`<td>${displayScore(x.s,c)||'-'}</td>`);h+=`<td class="highlight">${x.total}</td><td class="${rc}">${x.rank}</td><td style="font-size:11px;color:#e74c3c;max-width:80px;white-space:normal">${note||'-'}</td></tr>`;});
   document.getElementById('tResTable').innerHTML=h;
 }
 function tGetText(){
-  const d=tScores.map((s,i)=>({cls:i+1,s,total:scoreTotal(s)}));
+  const criteria=criteriaForGrade(tGrade);
+  const d=tScores.map((s,i)=>({cls:i+1,s,total:scoreTotal(s,tGrade)}));
   const sorted=[...d].sort((a,b)=>b.total-a.total);let r=1;sorted.forEach((it,i)=>{if(i>0&&it.total<sorted[i-1].total)r=i+1;it.rank=r;});
   sorted.forEach(x=>d[x.cls-1].rank=x.rank);
   let t=`📋 115學年度運動會\n晴天精神錦標評分結果\n━━━━━━━━━━\n評分委員：${tTeacher}\n評分年級：${tGrade}\n━━━━━━━━━━\n班級 | `;
-  CRITERIA.forEach(c=>t+=`${c.name} | `);t+=`總分 | 名次\n──────────\n`;
-  d.forEach(x=>{t+=`${x.cls}班 | `;CRITERIA.forEach(c=>t+=`${displayScore(x.s,c)||'　'} | `);t+=`${x.total} | 第${x.rank}名\n`;});
+  criteria.forEach(c=>t+=`${c.name} | `);t+=`總分 | 名次\n──────────\n`;
+  d.forEach(x=>{t+=`${x.cls}班 | `;criteria.forEach(c=>t+=`${displayScore(x.s,c)||'　'} | `);t+=`${x.total} | 第${x.rank}名\n`;});
   const hasNotes=tNotes.some(n=>n);if(hasNotes){t+=`━━━━━━━━━━\n⚠️ 違規備註：\n`;tNotes.forEach((n,i)=>{if(n)t+=`  ${i+1}班：${n}\n`;});}
   t+=`━━━━━━━━━━\n`;const now=new Date(),p=n=>String(n).padStart(2,'0');
   t+=`評分時間：${now.getFullYear()}/${p(now.getMonth()+1)}/${p(now.getDate())} ${p(now.getHours())}:${p(now.getMinutes())}`;return t;
@@ -529,18 +541,19 @@ function aRenderTT(){
     btn.onclick=()=>{aCurTeacher=i;aRenderTT();aRenderInput();};w.appendChild(btn);
   });
 }
-function aTDone(t){const a=aData[aCurGrade][t];return a&&a.every(cls=>hasAnyScore(cls));}
+function aTDone(t){const a=aData[aCurGrade][t];return a&&a.every(cls=>hasAnyScore(cls,aCurGrade));}
 function aRenderInput(){
   const teacher=TEACHERS[aCurGrade][aCurTeacher],cnt=aClassCounts[aCurGrade],scores=aData[aCurGrade][teacher];
+  const criteria=criteriaForGrade(aCurGrade);
   const ts=aTimestamps[aCurGrade]&&aTimestamps[aCurGrade][teacher];
   let h=`<h3 style="margin-top:14px">${teacher}的評分</h3>${ts?`<div class="submit-time">📌 提交時間：${ts}</div>`:''}<table class="input-table"><tr><th>班級</th>`;
-  CRITERIA.forEach(c=>h+=`<th>${c.name}</th>`);h+=`<th>總分</th><th>備註</th></tr>`;
+  criteria.forEach(c=>h+=`<th>${c.name}</th>`);h+=`<th>總分</th><th>備註</th></tr>`;
   const notes=aNotes[aCurGrade]&&aNotes[aCurGrade][teacher]?aNotes[aCurGrade][teacher]:[];
   for(let i=0;i<cnt;i++){
-    const s=normalizeScoreRow(scores[i]),total=scoreTotal(s);
+    const s=normalizeScoreRow(scores[i]),total=scoreTotal(s,aCurGrade);
     const note=notes[i]||'';
     h+=`<tr><td class="cls-label">${i+1}班</td>`;
-    CRITERIA.forEach(c=>{const v=displayScore(s,c);h+=`<td><input type="number" class="score-input${v?' filled':''}" min="0" max="${MAX}" value="${v||''}" inputmode="numeric" pattern="[0-9]*" onfocus="this.select()" oninput="aSet('${teacher}',${i},'${c.key}',this)" onchange="aSet('${teacher}',${i},'${c.key}',this)"></td>`;});
+    criteria.forEach(c=>{const v=displayScore(s,c);h+=`<td><input type="number" class="score-input${v?' filled':''}" min="0" max="${MAX}" value="${v||''}" inputmode="numeric" pattern="[0-9]*" onfocus="this.select()" oninput="aSet('${teacher}',${i},'${c.key}',this)" onchange="aSet('${teacher}',${i},'${c.key}',this)"></td>`;});
     h+=`<td class="row-total-admin">${total||'-'}</td>`;
     h+=`<td><input type="text" class="note-input" style="width:70px;min-height:auto;padding:4px 6px;font-size:11px" value="${note.replace(/"/g,'&quot;')}" placeholder="-" oninput="aSetNote('${teacher}',${i},this)"></td></tr>`;
   }
@@ -550,15 +563,15 @@ function aSetNote(teacher,ci,el){if(!aNotes[aCurGrade])aNotes[aCurGrade]={};if(!
 function aSet(teacher,ci,key,el){
   let v=parseInt(el.value);if(isNaN(v)||v<0)v=0;if(v>MAX){v=MAX;el.value=v;}
   aData[aCurGrade][teacher][ci][key]=v;el.classList.toggle('filled',v>0);
-  const s=aData[aCurGrade][teacher][ci];el.closest('tr').querySelector('.row-total-admin').textContent=scoreTotal(s)||'-';
+  const s=aData[aCurGrade][teacher][ci];el.closest('tr').querySelector('.row-total-admin').textContent=scoreTotal(s,aCurGrade)||'-';
   aRenderTT();aRenderStats();saveLS();
 }
 function aRenderStats(){
   const sec=document.getElementById('aStatsSection'),g=aCurGrade,cnt=aClassCounts[g],ts=TEACHERS[g];
-  let any=false;ts.forEach(t=>{if(aData[g][t])aData[g][t].forEach(cls=>{if(hasAnyScore(cls))any=true;});});
+  let any=false;ts.forEach(t=>{if(aData[g][t])aData[g][t].forEach(cls=>{if(hasAnyScore(cls,g))any=true;});});
   if(!any){sec.style.display='none';return;}sec.style.display='block';
   const res=[];
-  for(let i=0;i<cnt;i++){const tt=[];ts.forEach(t=>{const s=aData[g][t][i];tt.push(scoreTotal(s));});const avg=tt.reduce((a,b)=>a+b,0)/ts.length;res.push({cls:i+1,tt,avg});}
+  for(let i=0;i<cnt;i++){const tt=[];ts.forEach(t=>{const s=aData[g][t][i];tt.push(scoreTotal(s,g));});const avg=tt.reduce((a,b)=>a+b,0)/ts.length;res.push({cls:i+1,tt,avg});}
   const sorted=[...res].sort((a,b)=>b.avg-a.avg);let rk=1;sorted.forEach((it,i)=>{if(i>0&&it.avg<sorted[i-1].avg)rk=i+1;it.rank=rk;});
   sorted.forEach(s=>res[s.cls-1].rank=s.rank);
   let h=`<tr><th>班級</th>`;ts.forEach(t=>h+=`<th>${t.replace('老師','').replace('主任','')}</th>`);h+=`<th>平均</th><th>名次</th><th>備註</th></tr>`;
@@ -569,7 +582,7 @@ function aRenderStats(){
 }
 function aGetText(grade){
   const g=grade||aCurGrade,cnt=aClassCounts[g],ts=TEACHERS[g];
-  const res=[];for(let i=0;i<cnt;i++){const tt=[];ts.forEach(t=>{const s=aData[g][t][i];tt.push(scoreTotal(s));});res.push({cls:i+1,tt,avg:tt.reduce((a,b)=>a+b,0)/ts.length});}
+  const res=[];for(let i=0;i<cnt;i++){const tt=[];ts.forEach(t=>{const s=aData[g][t][i];tt.push(scoreTotal(s,g));});res.push({cls:i+1,tt,avg:tt.reduce((a,b)=>a+b,0)/ts.length});}
   const sorted=[...res].sort((a,b)=>b.avg-a.avg);let rk=1;sorted.forEach((it,i)=>{if(i>0&&it.avg<sorted[i-1].avg)rk=i+1;it.rank=rk;});
   sorted.forEach(s=>res[s.cls-1].rank=s.rank);
   let t=`📊 115學年度運動會\n${g} 晴天精神錦標評分統計\n━━━━━━━━━━\n班級 | `;ts.forEach(tc=>t+=`${tc.replace('老師','').replace('主任','')} | `);t+=`平均 | 名次\n──────────\n`;
@@ -582,8 +595,8 @@ function aGetText(grade){
 function aCopyStats(){doCopy(aGetText());}
 function shareLine(text){const t=encodeURIComponent(text);const isM=/iPhone|iPad|Android/i.test(navigator.userAgent);if(isM){window.location.href='line://msg/text/'+t;}else{window.open('https://social-plugins.line.me/lineit/share?url=&text='+t,'_blank');}}
 function aExportAll(){
-  let all=`📊 115學年度運動會 晴天精神錦標全年級統計\n彙整：管理者（王麒喻、陳莉榛）\n\n`;
-  GRADES.forEach(g=>{let has=false;TEACHERS[g].forEach(t=>{if(aData[g][t])aData[g][t].forEach(cls=>{if(hasAnyScore(cls))has=true;});});if(has)all+=aGetText(g)+'\n';});
+  let all=`📊 115學年度運動會 晴天精神錦標全年級統計\n彙整：資料組長；確認：輔導組長\n\n`;
+  GRADES.forEach(g=>{let has=false;TEACHERS[g].forEach(t=>{if(aData[g][t])aData[g][t].forEach(cls=>{if(hasAnyScore(cls,g))has=true;});});if(has)all+=aGetText(g)+'\n';});
   doCopy(all);
 }
 
