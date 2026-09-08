@@ -130,6 +130,19 @@
   .stats-section{margin-top:18px}
   .stats-title{font-size:16px;font-weight:700;color:#333;margin-bottom:12px}
   .submit-time{font-size:12px;color:#27ae60;background:#eafaf1;padding:6px 10px;border-radius:8px;margin-bottom:10px;border-left:3px solid #27ae60}
+  .top3-card{background:#fff;border-radius:14px;padding:14px;margin-bottom:12px;box-shadow:0 1px 6px rgba(0,0,0,.05)}
+  .top3-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+  .top3-title{font-size:16px;font-weight:800;color:#333}
+  .top3-note{font-size:11px;color:#888;text-align:right}
+  .podium-list{display:grid;gap:8px}
+  .podium-item{display:grid;grid-template-columns:44px 1fr auto;align-items:center;gap:10px;border:1px solid #eee;border-radius:10px;padding:10px;background:#fafafa}
+  .podium-rank{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800;color:#fff}
+  .podium-rank.r1{background:#e74c3c}
+  .podium-rank.r2{background:#e67e22}
+  .podium-rank.r3{background:#27ae60}
+  .podium-class{font-size:16px;font-weight:800;color:#333}
+  .podium-meta{font-size:11px;color:#777;margin-top:2px}
+  .podium-score{font-size:20px;font-weight:900;color:#e67e22;text-align:right}
 
   .note-wrap{margin-top:10px;padding-top:10px;border-top:1px dashed #eee}
   .note-label{font-size:12px;font-weight:700;color:#e74c3c;margin-bottom:6px;display:flex;align-items:center;gap:4px}
@@ -220,6 +233,14 @@
     <div class="version-note">更新版：管理者可直接查看評分明細，並可切換上午／下午評分人員。</div>
     <div class="admin-grade-bar" id="aGradeBar"></div>
     <button class="act-btn copy" style="margin-bottom:12px" onclick="syncCloud()">🔄 從雲端同步最新資料</button>
+
+    <div class="top3-card" id="aTop3Section" style="display:none">
+      <div class="top3-head">
+        <div class="top3-title">🏆 即時前三名</div>
+        <div class="top3-note" id="aTop3Note"></div>
+      </div>
+      <div class="podium-list" id="aTop3List"></div>
+    </div>
 
     <div style="margin-top:12px">
       <button class="act-btn" style="background:#f0f0f0;color:#666" onclick="toggleDetail()">📋 顯示 / 隱藏評分明細</button>
@@ -569,9 +590,10 @@ function aSet(teacher,ci,key,el){
 function aRenderStats(){
   const sec=document.getElementById('aStatsSection'),g=aCurGrade,cnt=aClassCounts[g],ts=TEACHERS[g];
   let any=false;ts.forEach(t=>{if(aData[g][t])aData[g][t].forEach(cls=>{if(hasAnyScore(cls,g))any=true;});});
-  if(!any){sec.style.display='none';return;}sec.style.display='block';
+  if(!any){sec.style.display='none';aRenderTop3([],0);return;}sec.style.display='block';
   const res=[];
   for(let i=0;i<cnt;i++){const tt=[];ts.forEach(t=>{const s=aData[g][t][i];tt.push(scoreTotal(s,g));});const avg=tt.reduce((a,b)=>a+b,0)/ts.length;res.push({cls:i+1,tt,avg});}
+  aRenderTop3(getLiveTop3(g,cnt,ts),totalMaxForGrade(g));
   const sorted=[...res].sort((a,b)=>b.avg-a.avg);let rk=1;sorted.forEach((it,i)=>{if(i>0&&it.avg<sorted[i-1].avg)rk=i+1;it.rank=rk;});
   sorted.forEach(s=>res[s.cls-1].rank=s.rank);
   let h=`<tr><th>班級</th>`;ts.forEach(t=>h+=`<th>${t.replace('老師','').replace('主任','')}</th>`);h+=`<th>平均<br>滿分${totalMaxForGrade(g)}</th><th>名次</th><th>備註</th></tr>`;
@@ -579,6 +601,29 @@ function aRenderStats(){
     const allNotes=[];ts.forEach(t=>{const n=aNotes[g]&&aNotes[g][t]&&aNotes[g][t][r.cls-1];if(n)allNotes.push(n);});
     h+=`<td style="font-size:11px;color:#e74c3c;max-width:80px;white-space:normal">${allNotes.length?allNotes.join('；'):'-'}</td></tr>`;});
   document.getElementById('aStatsTable').innerHTML=h;
+}
+function getLiveTop3(g,cnt,ts){
+  const res=[];
+  for(let i=0;i<cnt;i++){
+    let sum=0,judges=0;
+    ts.forEach(t=>{
+      const s=aData[g][t]&&aData[g][t][i];
+      if(s&&hasAnyScore(s,g)){sum+=scoreTotal(s,g);judges++;}
+    });
+    if(judges>0)res.push({cls:i+1,avg:sum/judges,judges});
+  }
+  res.sort((a,b)=>b.avg-a.avg||b.judges-a.judges||a.cls-b.cls);
+  let rank=1;
+  res.forEach((it,i)=>{if(i>0&&it.avg<res[i-1].avg)rank=i+1;it.rank=rank;});
+  return res.filter(x=>x.rank<=3);
+}
+function aRenderTop3(items,maxScore){
+  const sec=document.getElementById('aTop3Section'),list=document.getElementById('aTop3List'),note=document.getElementById('aTop3Note');
+  if(!sec||!list||!note)return;
+  if(!items.length){sec.style.display='none';list.innerHTML='';note.textContent='';return;}
+  sec.style.display='block';
+  note.textContent=`${aCurGrade}｜目前已輸入資料`;
+  list.innerHTML=items.map(x=>`<div class="podium-item"><div class="podium-rank r${Math.min(x.rank,3)}">${x.rank}</div><div><div class="podium-class">${x.cls}班</div><div class="podium-meta">納入 ${x.judges} 位評分委員${maxScore?`｜滿分 ${maxScore}`:''}</div></div><div class="podium-score">${x.avg.toFixed(1)}</div></div>`).join('');
 }
 function aGetText(grade){
   const g=grade||aCurGrade,cnt=aClassCounts[g],ts=TEACHERS[g];
