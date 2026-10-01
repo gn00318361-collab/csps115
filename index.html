@@ -200,6 +200,14 @@
     <button class="big-btn blue" id="tStartBtn" disabled onclick="tStartScoring()">開始評分</button>
   </div>
 
+  <!-- 活動選擇 -->
+  <div class="screen" id="scrActivityPick" style="padding-top:20px">
+    <div class="info-bar" id="tActivityInfo"></div>
+    <span class="field-label">請選擇目前要評分的活動</span>
+    <div id="tActivityList"></div>
+    <button class="big-btn blue" style="margin-top:14px" onclick="show('scrTeacherLogin')">返回</button>
+  </div>
+
   <!-- 老師評分 -->
   <div class="screen" id="scrTeacherScore">
     <div class="info-bar" id="tInfoBar"></div>
@@ -208,7 +216,7 @@
     <div id="tScoreArea"></div>
     <div class="bottom-bar">
       <button class="b-btn sec" onclick="tGoBack()">返回</button>
-      <button class="b-btn pri" id="tSubmitBtn" onclick="tSubmit()">✓ 提交評分</button>
+      <button class="b-btn pri" id="tSubmitBtn" onclick="tSubmit()">✓ 送出本活動</button>
     </div>
   </div>
 
@@ -388,8 +396,9 @@ const MAX=10,GRADES=Object.keys(TEACHERS);
 let role=null;
 let aCurGrade=GRADES[0],aCurTeacher=0,aPeriod=SCORE_PERIODS[0];
 let aClassCounts={},aData={},aTimestamps={},aNotes={};
-let tGrade=null,tPeriod=null,tTeacher=null,tClassCount=10,tCurClass=0;
+let tGrade=null,tPeriod=null,tTeacher=null,tClassCount=10,tCurClass=0,tCriterion=null;
 let tScores=[],tNotes=[];
+const ACTIVITY_LS_KEY='sports115_spirit_activity_drafts';
 
 const FIXED_COUNTS={"三年級":9,"四年級":9,"五年級":10,"六年級":10};
 GRADES.forEach(g=>{aClassCounts[g]=FIXED_COUNTS[g];aData[g]={};aTimestamps[g]={};aNotes[g]={};TEACHERS[g].forEach(t=>{aData[g][t]=null;aTimestamps[g][t]=null;aNotes[g][t]=null;});});
@@ -440,10 +449,37 @@ function tAdjCount(d){tClassCount=Math.max(1,Math.min(15,tClassCount+d));documen
 // ===== 老師評分 =====
 function tStartScoring(){
   if(!tGrade||!tTeacher)return;
+  tRenderActivityPick();
+  show('scrActivityPick');
+}
+function activityStore(){
+  try{return JSON.parse(localStorage.getItem(ACTIVITY_LS_KEY)||'{}')}catch(e){return {}}
+}
+function activityKey(cKey){return [tGrade,tTeacher,cKey].join('||');}
+function saveActivityStore(obj){try{localStorage.setItem(ACTIVITY_LS_KEY,JSON.stringify(obj));}catch(e){}}
+function activityDone(cKey){
+  const st=activityStore(), rec=st[activityKey(cKey)];
+  return !!(rec&&Array.isArray(rec.values)&&rec.values.length===tClassCount&&rec.values.every(v=>Number(v)>0));
+}
+function tRenderActivityPick(){
   const criteria=criteriaForGrade(tGrade);
-  tScores=[];tNotes=[];for(let i=0;i<tClassCount;i++){const o={};criteria.forEach(c=>o[c.key]=0);tScores.push(o);tNotes.push('');}
+  document.getElementById('tActivityInfo').innerHTML=`<strong>${tTeacher}</strong>｜${tGrade}<br>每個活動評完後可立即送出；送出後可再進入修改並重新送出。`;
+  const w=document.getElementById('tActivityList');w.innerHTML='';
+  criteria.forEach(c=>{
+    const done=activityDone(c.key);
+    const b=document.createElement('button');
+    b.className='t-btn'+(done?' on':'');
+    b.innerHTML=`${done?'✓ ':''}${c.name}<span style="float:right;font-size:12px;color:${done?'#27ae60':'#999'}">${done?'已完成':'尚未評分'}</span>`;
+    b.onclick=()=>tOpenActivity(c.key);w.appendChild(b);
+  });
+}
+function tOpenActivity(cKey){
+  tCriterion=ALL_CRITERIA.find(c=>c.key===cKey);if(!tCriterion)return;
+  const st=activityStore(),rec=st[activityKey(cKey)];
+  tScores=[];tNotes=[];
+  for(let i=0;i<tClassCount;i++){const o={};criteriaForGrade(tGrade).forEach(c=>o[c.key]=0);if(rec&&rec.values)o[cKey]=Number(rec.values[i])||0;tScores.push(o);tNotes.push(rec&&rec.notes?rec.notes[i]||'':'');}
   tCurClass=0;show('scrTeacherScore');
-  document.getElementById('tInfoBar').innerHTML=`<strong>${tTeacher}</strong>｜${tGrade}（${tClassCount} 班）<br>晴天精神錦標評分：${criteria.map(c=>c.name).join('、')}（總分${totalMaxForGrade(tGrade)}）`;
+  document.getElementById('tInfoBar').innerHTML=`<strong>${tTeacher}</strong>｜${tGrade}<br>目前活動：<strong>${tCriterion.name}</strong>｜請完成 ${tClassCount} 班後送出`;
   tRenderTabs();tRenderCard();
 }
 function tRenderTabs(){
@@ -457,39 +493,46 @@ function tRenderTabs(){
 function scoreTotal(s,grade){const ns=normalizeScoreRow(s);return criteriaForGrade(grade||tGrade||aCurGrade).reduce((sum,c)=>sum+(Number(ns[c.key])||0),0);}
 function hasAnyScore(s,grade){const ns=normalizeScoreRow(s);return criteriaForGrade(grade||tGrade||aCurGrade).some(c=>(Number(ns[c.key])||0)>0);}
 function displayScore(s,c){const ns=normalizeScoreRow(s);const v=Number(ns[c.key])||0;return v||'';}
-function tDone(i){return hasAnyScore(tScores[i],tGrade);}
+function tDone(i){return !!(tCriterion&&Number(tScores[i][tCriterion.key])>0);}
 function tRenderCard(){
-  const s=tScores[tCurClass];
-  let h=`<div class="score-card"><h3>${tGrade} ${tCurClass+1}班</h3>`;
-  criteriaForGrade(tGrade).forEach(c=>{h+=`<div class="row"><span class="row-label">${c.name}</span><div class="star-group">`;for(let n=1;n<=MAX;n++)h+=`<button class="star${s[c.key]>=n?' on':''}" onclick="tSet('${c.key}',${n})">${n}</button>`;h+=`</div><span class="row-score">${s[c.key]||'-'}</span></div>`;});
-  const total=scoreTotal(s,tGrade);
-  h+=`<div class="total-row"><span class="total-label">總分（滿分${totalMaxForGrade(tGrade)}）</span><span class="total-val">${total||'-'}</span></div>`;
+  const s=tScores[tCurClass],c=tCriterion;
+  let h=`<div class="score-card"><h3>${tGrade} ${tCurClass+1}班｜${c.name}</h3>`;
+  h+=`<div class="row"><span class="row-label">${c.name}</span><div class="star-group">`;
+  for(let n=1;n<=MAX;n++)h+=`<button class="star${s[c.key]>=n?' on':''}" onclick="tSet('${c.key}',${n})">${n}</button>`;
+  h+=`</div><span class="row-score">${s[c.key]||'-'}</span></div>`;
   h+=`<div class="note-wrap"><div class="note-label">⚠️ 違規備註</div><textarea class="note-input${tNotes[tCurClass]?' has-text':''}" placeholder="如有違規事項請在此備註（非必填）" oninput="tSetNote(this)">${tNotes[tCurClass]||''}</textarea></div>`;
-  if(tDone(tCurClass)&&tCurClass<tClassCount-1){
-    h+=`<button onclick="tNextClass()" style="width:100%;padding:14px;margin-top:12px;border:none;border-radius:10px;background:linear-gradient(135deg,#4a90d9,#357abd);color:#fff;font-size:16px;font-weight:700;cursor:pointer;box-shadow:0 3px 10px rgba(74,144,217,0.3)">下一班 →</button>`;
-  }
-  h+=`</div>`;
-  document.getElementById('tScoreArea').innerHTML=h;
+  if(tDone(tCurClass)&&tCurClass<tClassCount-1)h+=`<button onclick="tNextClass()" style="width:100%;padding:14px;margin-top:12px;border:none;border-radius:10px;background:linear-gradient(135deg,#4a90d9,#357abd);color:#fff;font-size:16px;font-weight:700;cursor:pointer">下一班 →</button>`;
+  h+=`</div>`;document.getElementById('tScoreArea').innerHTML=h;
 }
 function tSet(key,val){
-  tScores[tCurClass][key]=val;tRenderCard();tRenderTabs();
+  tScores[tCurClass][key]=val;tSaveActivityDraft();tRenderCard();tRenderTabs();
 }
 function tNextClass(){
   for(let i=tCurClass+1;i<tClassCount;i++){if(!tDone(i)){tCurClass=i;tRenderTabs();tRenderCard();showToast(`跳到 ${i+1}班`);return;}}
   tCurClass=tCurClass+1;if(tCurClass>=tClassCount)tCurClass=tClassCount-1;tRenderTabs();tRenderCard();
 }
-function tSetNote(el){tNotes[tCurClass]=el.value.trim();el.classList.toggle('has-text',!!el.value.trim());}
-function tGoBack(){if(tScores.some((_,i)=>tDone(i))&&!confirm('返回將清除評分，確定嗎？'))return;show('scrTeacherLogin');}
+function tSetNote(el){tNotes[tCurClass]=el.value.trim();tSaveActivityDraft();el.classList.toggle('has-text',!!el.value.trim());}
+function tSaveActivityDraft(){if(!tCriterion)return;const st=activityStore();st[activityKey(tCriterion.key)]={values:tScores.map(s=>Number(s[tCriterion.key])||0),notes:[...tNotes],savedAt:new Date().toISOString()};saveActivityStore(st);}
+function tGoBack(){tSaveActivityDraft();tRenderActivityPick();show('scrActivityPick');}
 
 // ===== 老師提交 =====
 function tSubmit(){
   const u=tScores.findIndex((_,i)=>!tDone(i));
-  if(u>=0){showToast(`${u+1}班 尚有未評項目`);tCurClass=u;tRenderTabs();tRenderCard();return;}
-  tScores=normalizeScores(tScores,tClassCount);
-  aClassCounts[tGrade]=tClassCount;if(!aData[tGrade])aData[tGrade]={};
-  aData[tGrade][tTeacher]=JSON.parse(JSON.stringify(tScores));aNotes[tGrade][tTeacher]=[...tNotes];aTimestamps[tGrade][tTeacher]=new Date().toLocaleString('zh-TW');saveLS();
-  cloudSubmit(tGrade, tTeacher, tScores, tNotes);
-  show('scrTeacherResult');document.getElementById('tResSub').innerHTML=`${tTeacher}｜${tGrade}<br><span style="font-size:12px;color:#27ae60">評分已自動同步到雲端</span>`;tRenderResult();
+  if(u>=0){showToast(`${u+1}班 尚未評分`);tCurClass=u;tRenderTabs();tRenderCard();return;}
+  tSaveActivityDraft();
+  // 合併此活動到既有完整資料，避免覆蓋其他已送出的活動
+  if(!aData[tGrade])aData[tGrade]={};
+  let merged=normalizeScores(aData[tGrade][tTeacher]||[],tClassCount);
+  for(let i=0;i<tClassCount;i++)merged[i][tCriterion.key]=Number(tScores[i][tCriterion.key])||0;
+  aData[tGrade][tTeacher]=merged;
+  if(!aNotes[tGrade])aNotes[tGrade]={};
+  let notes=Array.isArray(aNotes[tGrade][tTeacher])?[...aNotes[tGrade][tTeacher]]:Array(tClassCount).fill('');
+  while(notes.length<tClassCount)notes.push('');
+  tNotes.forEach((n,i)=>{if(n)notes[i]=n;});aNotes[tGrade][tTeacher]=notes;
+  aTimestamps[tGrade][tTeacher]=new Date().toLocaleString('zh-TW');saveLS();
+  cloudSubmit(tGrade,tTeacher,merged,notes);
+  showToast(`${tCriterion.name} 已送出`);
+  tRenderActivityPick();show('scrActivityPick');
 }
 function tRenderResult(){
   const criteria=criteriaForGrade(tGrade);
