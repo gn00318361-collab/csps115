@@ -160,7 +160,7 @@
 
 <div class="header teacher-mode" id="mainHeader">
   <h1>115學年度運動會</h1>
-  <div class="sub">晴天精神錦標評分系統</div>
+  <div class="sub">晴天精神錦標評分系統｜版本 2026-10-06-v2</div>
 </div>
 
 <div class="container">
@@ -283,6 +283,7 @@
 <div class="toast" id="toast"></div>
 
 <script>
+const APP_VERSION="2026-10-06-v2";
 // ===== Google Sheets 雲端同步 =====
 // 請將下方 URL 替換為你的 Google Apps Script 部署網址
 const API_URL = 'https://script.google.com/macros/s/AKfycbzt6H8J6rZ2ySSpk5sA3FLqYI3j3l_NEV_mjdGkeUliEVF4TPTBUJWBUjEtciVZ8YVpmA/exec';
@@ -315,16 +316,35 @@ function withLegacyKeys(row){
 }
 
 async function cloudSubmit(grade, teacher, scores, notes) {
-  if (!API_URL || API_URL === 'YOUR_GOOGLE_APPS_SCRIPT_URL') return;
+  if (!API_URL || API_URL === 'YOUR_GOOGLE_APPS_SCRIPT_URL') {
+    showToast('⚠️ 尚未設定雲端資料庫');
+    return false;
+  }
   const normalizedScores=normalizeScores(scores, scores.length);
   try {
-    await fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
-      body: JSON.stringify({ action: 'submit', grade, teacher, scores: normalizedScores.map(withLegacyKeys), scoresV2: normalizedScores, notes, criteriaVersion: '115-spirit-7' })
+    const res=await fetch(API_URL,{
+      method:'POST',
+      headers:{'Content-Type':'text/plain'},
+      body:JSON.stringify({
+        action:'submit', grade, teacher,
+        scores:normalizedScores.map(withLegacyKeys),
+        scoresV2:normalizedScores, notes,
+        criteriaVersion:'115-spirit-7',
+        appVersion:APP_VERSION,
+        submittedAt:new Date().toISOString()
+      })
     });
-    showToast('已同步到雲端');
-  } catch (e) { showToast('雲端同步失敗，資料已存本機'); }
+    const raw=await res.text();
+    let json;
+    try{json=JSON.parse(raw);}catch(e){throw new Error('伺服器回傳格式錯誤');}
+    if(!res.ok || json.status!=='ok') throw new Error(json.message||`HTTP ${res.status}`);
+    showToast('✅ 雲端儲存成功');
+    return true;
+  }catch(e){
+    console.error('雲端同步失敗',e);
+    showToast('⚠️ 雲端儲存失敗，草稿仍保留');
+    return false;
+  }
 }
 
 async function cloudLoad() {
@@ -463,7 +483,7 @@ function activityDone(cKey){
 }
 function tRenderActivityPick(){
   const criteria=criteriaForGrade(tGrade);
-  document.getElementById('tActivityInfo').innerHTML=`<strong>${tTeacher}</strong>｜${tGrade}<br>每個活動評完後可立即送出；送出後可再進入修改並重新送出。`;
+  document.getElementById('tActivityInfo').innerHTML=`<strong>${tTeacher}</strong>｜${tGrade}<br>每個活動評完後可立即送出；送出後可再進入修改並重新送出。<br><span style="color:#888">版本：${APP_VERSION}</span>`;
   const w=document.getElementById('tActivityList');w.innerHTML='';
   criteria.forEach(c=>{
     const done=activityDone(c.key);
@@ -516,24 +536,42 @@ function tSaveActivityDraft(){if(!tCriterion)return;const st=activityStore();st[
 function tGoBack(){tSaveActivityDraft();tRenderActivityPick();show('scrActivityPick');}
 
 // ===== 老師提交 =====
-function tSubmit(){
+async function tSubmit(){
   const u=tScores.findIndex((_,i)=>!tDone(i));
   if(u>=0){showToast(`${u+1}班 尚未評分`);tCurClass=u;tRenderTabs();tRenderCard();return;}
+
   tSaveActivityDraft();
-  // 合併此活動到既有完整資料，避免覆蓋其他已送出的活動
+
   if(!aData[tGrade])aData[tGrade]={};
   let merged=normalizeScores(aData[tGrade][tTeacher]||[],tClassCount);
   for(let i=0;i<tClassCount;i++)merged[i][tCriterion.key]=Number(tScores[i][tCriterion.key])||0;
-  aData[tGrade][tTeacher]=merged;
+
   if(!aNotes[tGrade])aNotes[tGrade]={};
   let notes=Array.isArray(aNotes[tGrade][tTeacher])?[...aNotes[tGrade][tTeacher]]:Array(tClassCount).fill('');
   while(notes.length<tClassCount)notes.push('');
-  tNotes.forEach((n,i)=>{if(n)notes[i]=n;});aNotes[tGrade][tTeacher]=notes;
-  aTimestamps[tGrade][tTeacher]=new Date().toLocaleString('zh-TW');saveLS();
-  cloudSubmit(tGrade,tTeacher,merged,notes);
-  showToast(`${tCriterion.name} 已送出`);
-  tRenderActivityPick();show('scrActivityPick');
+  tNotes.forEach((n,i)=>{if(n)notes[i]=n;});
+
+  const btn=document.getElementById('tSubmitBtn');
+  const oldText=btn.textContent;
+  btn.disabled=true;
+  btn.textContent='☁️ 正在送出…';
+
+  const ok=await cloudSubmit(tGrade,tTeacher,merged,notes);
+
+  btn.textContent=oldText;
+  btn.disabled=false;
+
+  if(!ok) return;
+
+  aData[tGrade][tTeacher]=merged;
+  aNotes[tGrade][tTeacher]=notes;
+  aTimestamps[tGrade][tTeacher]=new Date().toLocaleString('zh-TW');
+  saveLS();
+
+  tRenderActivityPick();
+  show('scrActivityPick');
 }
+
 function tRenderResult(){
   const criteria=criteriaForGrade(tGrade);
   const tots=tScores.map((s,i)=>({cls:i+1,s,total:scoreTotal(s,tGrade)}));
