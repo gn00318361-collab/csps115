@@ -160,7 +160,7 @@
 
 <div class="header teacher-mode" id="mainHeader">
   <h1>115學年度運動會</h1>
-  <div class="sub">晴天精神錦標評分系統｜版本 2026-10-06-v2</div>
+  <div class="sub">晴天精神錦標評分系統｜版本 2026-10-09-v4</div>
 </div>
 
 <div class="container">
@@ -283,7 +283,7 @@
 <div class="toast" id="toast"></div>
 
 <script>
-const APP_VERSION="2026-10-06-v2";
+const APP_VERSION="2026-10-09-v4";
 // ===== Google Sheets 雲端同步 =====
 // 請將下方 URL 替換為你的 Google Apps Script 部署網址
 const API_URL = 'https://script.google.com/macros/s/AKfycbzt6H8J6rZ2ySSpk5sA3FLqYI3j3l_NEV_mjdGkeUliEVF4TPTBUJWBUjEtciVZ8YVpmA/exec';
@@ -406,6 +406,34 @@ const CRITERIA_BY_GRADE={
   "五年級":["entrance","exercise","rhythm","team","clean","order"],
   "六年級":["entrance","exercise","rhythm","team","clean","order"]
 };
+// Each judge only sees events occurring in their assigned half-day.
+const PERIOD_CRITERIA={
+  "三年級":{"上午":["rhythm","clean","order"],"下午":["team","clean","order"]},
+  "四年級":{"上午":["cheer","rhythm","clean","order"],"下午":["team","clean","order"]},
+  "五年級":{"上午":["entrance","exercise","team","clean","order"],"下午":["rhythm","clean","order"]},
+  "六年級":{"上午":["entrance","exercise","team","clean","order"],"下午":["rhythm","clean","order"]}
+};
+function periodOf(teacher){return String(teacher||'').startsWith('上午 ')?'上午':'下午';}
+function criteriaForPeriod(grade,period){return (PERIOD_CRITERIA[grade]?.[period]||[]).map(k=>ALL_CRITERIA.find(c=>c.key===k)).filter(Boolean);}
+function criteriaForTeacher(grade,teacher){return criteriaForPeriod(grade,periodOf(teacher));}
+function criterionApplies(grade,teacher,key){return criteriaForTeacher(grade,teacher).some(c=>c.key===key);}
+function scoreOf(row,key){return Number(normalizeScoreRow(row)[key])||0;}
+// Score each paper criterion once. For common-area criteria, both half-days have equal weight.
+function aggregateClass(grade,classIndex){
+  const parts={}, missing=[];
+  for(const c of criteriaForGrade(grade)){
+    const periods=['上午','下午'].filter(p=>PERIOD_CRITERIA[grade][p].includes(c.key));
+    const means=[];
+    for(const period of periods){
+      const judges=TEACHERS[grade].filter(t=>periodOf(t)===period);
+      const values=judges.map(t=>scoreOf(aData[grade]?.[t]?.[classIndex],c.key));
+      if(values.some(v=>v<=0)){missing.push(`${c.name}（${period}）`);continue;}
+      means.push(values.reduce((a,b)=>a+b,0)/values.length);
+    }
+    if(means.length===periods.length)parts[c.key]=means.reduce((a,b)=>a+b,0)/means.length;
+  }
+  return {total:Object.values(parts).reduce((a,b)=>a+b,0),parts,complete:missing.length===0,missing};
+}
 function criteriaForGrade(grade){
   const keys=CRITERIA_BY_GRADE[grade]||ALL_CRITERIA.map(c=>c.key);
   return keys.map(k=>ALL_CRITERIA.find(c=>c.key===k)).filter(Boolean);
@@ -482,7 +510,7 @@ function activityDone(cKey){
   return !!(rec&&Array.isArray(rec.values)&&rec.values.length===tClassCount&&rec.values.every(v=>Number(v)>0));
 }
 function tRenderActivityPick(){
-  const criteria=criteriaForGrade(tGrade);
+  const criteria=criteriaForTeacher(tGrade,tTeacher);
   document.getElementById('tActivityInfo').innerHTML=`<strong>${tTeacher}</strong>｜${tGrade}<br>每個活動評完後可立即送出；送出後可再進入修改並重新送出。<br><span style="color:#888">版本：${APP_VERSION}</span>`;
   const w=document.getElementById('tActivityList');w.innerHTML='';
   criteria.forEach(c=>{
@@ -497,7 +525,7 @@ function tOpenActivity(cKey){
   tCriterion=ALL_CRITERIA.find(c=>c.key===cKey);if(!tCriterion)return;
   const st=activityStore(),rec=st[activityKey(cKey)];
   tScores=[];tNotes=[];
-  for(let i=0;i<tClassCount;i++){const o={};criteriaForGrade(tGrade).forEach(c=>o[c.key]=0);if(rec&&rec.values)o[cKey]=Number(rec.values[i])||0;tScores.push(o);tNotes.push(rec&&rec.notes?rec.notes[i]||'':'');}
+  for(let i=0;i<tClassCount;i++){const o={};criteriaForTeacher(tGrade,tTeacher).forEach(c=>o[c.key]=0);if(rec&&rec.values)o[cKey]=Number(rec.values[i])||0;tScores.push(o);tNotes.push(rec&&rec.notes?rec.notes[i]||'':'');}
   tCurClass=0;show('scrTeacherScore');
   document.getElementById('tInfoBar').innerHTML=`<strong>${tTeacher}</strong>｜${tGrade}<br>目前活動：<strong>${tCriterion.name}</strong>｜請完成 ${tClassCount} 班後送出`;
   tRenderTabs();tRenderCard();
@@ -542,9 +570,13 @@ async function tSubmit(){
 
   tSaveActivityDraft();
 
+  await cloudLoad();
   if(!aData[tGrade])aData[tGrade]={};
   let merged=normalizeScores(aData[tGrade][tTeacher]||[],tClassCount);
-  for(let i=0;i<tClassCount;i++)merged[i][tCriterion.key]=Number(tScores[i][tCriterion.key])||0;
+  for(let i=0;i<tClassCount;i++){
+    merged[i][tCriterion.key]=Number(tScores[i][tCriterion.key])||0;
+    // Preserve existing values for unrelated criteria; do not erase previously submitted scores.
+  }
 
   if(!aNotes[tGrade])aNotes[tGrade]={};
   let notes=Array.isArray(aNotes[tGrade][tTeacher])?[...aNotes[tGrade][tTeacher]]:Array(tClassCount).fill('');
@@ -573,7 +605,7 @@ async function tSubmit(){
 }
 
 function tRenderResult(){
-  const criteria=criteriaForGrade(tGrade);
+  const criteria=criteriaForTeacher(tGrade,tTeacher);
   const tots=tScores.map((s,i)=>({cls:i+1,s,total:scoreTotal(s,tGrade)}));
   tots.sort((a,b)=>b.total-a.total);let r=1;tots.forEach((it,i)=>{if(i>0&&it.total<tots[i-1].total)r=i+1;it.rank=r;});
   const d=[...tots].sort((a,b)=>a.cls-b.cls);
@@ -582,7 +614,7 @@ function tRenderResult(){
   document.getElementById('tResTable').innerHTML=h;
 }
 function tGetText(){
-  const criteria=criteriaForGrade(tGrade);
+  const criteria=criteriaForTeacher(tGrade,tTeacher);
   const d=tScores.map((s,i)=>({cls:i+1,s,total:scoreTotal(s,tGrade)}));
   const sorted=[...d].sort((a,b)=>b.total-a.total);let r=1;sorted.forEach((it,i)=>{if(i>0&&it.total<sorted[i-1].total)r=i+1;it.rank=r;});
   sorted.forEach(x=>d[x.cls-1].rank=x.rank);
@@ -646,13 +678,13 @@ function aRenderTT(){
 function aTDone(t){const a=aData[aCurGrade][t];return a&&a.every(cls=>hasAnyScore(cls,aCurGrade));}
 function aRenderInput(){
   const teacher=TEACHERS[aCurGrade][aCurTeacher],cnt=aClassCounts[aCurGrade],scores=aData[aCurGrade][teacher];
-  const criteria=criteriaForGrade(aCurGrade);
+  const criteria=criteriaForTeacher(aCurGrade,teacher);
   const ts=aTimestamps[aCurGrade]&&aTimestamps[aCurGrade][teacher];
-  let h=`<h3 style="margin-top:14px">${teacher}的評分</h3><div class="info-bar"><strong>${aCurGrade}紙本欄位</strong><br>${criteria.map(c=>c.name).join('、')}；每格10分，總分${totalMaxForGrade(aCurGrade)}。</div>${ts?`<div class="submit-time">📌 提交時間：${ts}</div>`:''}<table class="input-table"><tr><th>班級</th>`;
-  criteria.forEach(c=>h+=`<th>${c.name}</th>`);h+=`<th>總分${totalMaxForGrade(aCurGrade)}</th><th>備註</th></tr>`;
+  let h=`<h3 style="margin-top:14px">${teacher}的評分</h3><div class="info-bar"><strong>${aCurGrade}紙本欄位</strong><br>${criteria.map(c=>c.name).join('、')}；每格10分；本時段滿分${criteria.length*MAX}，全年級總錦標滿分${totalMaxForGrade(aCurGrade)}。</div>${ts?`<div class="submit-time">📌 提交時間：${ts}</div>`:''}<table class="input-table"><tr><th>班級</th>`;
+  criteria.forEach(c=>h+=`<th>${c.name}</th>`);h+=`<th>本時段${criteria.length*MAX}分</th><th>備註</th></tr>`;
   const notes=aNotes[aCurGrade]&&aNotes[aCurGrade][teacher]?aNotes[aCurGrade][teacher]:[];
   for(let i=0;i<cnt;i++){
-    const s=normalizeScoreRow(scores[i]),total=scoreTotal(s,aCurGrade);
+    const s=normalizeScoreRow(scores[i]),total=criteria.reduce((sum,c)=>sum+scoreOf(s,c.key),0);
     const note=notes[i]||'';
     h+=`<tr><td class="cls-label">${i+1}班</td>`;
     criteria.forEach(c=>{const v=displayScore(s,c);h+=`<td><input type="number" class="score-input${v?' filled':''}" min="0" max="${MAX}" value="${v||''}" inputmode="numeric" pattern="[0-9]*" onfocus="this.select()" oninput="aSet('${teacher}',${i},'${c.key}',this)" onchange="aSet('${teacher}',${i},'${c.key}',this)"></td>`;});
@@ -665,58 +697,44 @@ function aSetNote(teacher,ci,el){if(!aNotes[aCurGrade])aNotes[aCurGrade]={};if(!
 function aSet(teacher,ci,key,el){
   let v=parseInt(el.value);if(isNaN(v)||v<0)v=0;if(v>MAX){v=MAX;el.value=v;}
   aData[aCurGrade][teacher][ci][key]=v;el.classList.toggle('filled',v>0);
-  const s=aData[aCurGrade][teacher][ci];el.closest('tr').querySelector('.row-total-admin').textContent=scoreTotal(s,aCurGrade)||'-';
+  const s=aData[aCurGrade][teacher][ci];el.closest('tr').querySelector('.row-total-admin').textContent=criteriaForTeacher(aCurGrade,teacher).reduce((sum,c)=>sum+scoreOf(s,c.key),0)||'-';
   aRenderTT();aRenderStats();saveLS();
 }
 function aRenderStats(){
-  const sec=document.getElementById('aStatsSection'),g=aCurGrade,cnt=aClassCounts[g],ts=TEACHERS[g];
-  let any=false;ts.forEach(t=>{if(aData[g][t])aData[g][t].forEach(cls=>{if(hasAnyScore(cls,g))any=true;});});
-  if(!any){sec.style.display='none';aRenderTop3([],0);return;}sec.style.display='block';
-  const res=[];
-  for(let i=0;i<cnt;i++){const tt=[];ts.forEach(t=>{const s=aData[g][t][i];tt.push(scoreTotal(s,g));});const avg=tt.reduce((a,b)=>a+b,0)/ts.length;res.push({cls:i+1,tt,avg});}
-  aRenderTop3(getLiveTop3(g,cnt,ts),totalMaxForGrade(g));
-  const sorted=[...res].sort((a,b)=>b.avg-a.avg);let rk=1;sorted.forEach((it,i)=>{if(i>0&&it.avg<sorted[i-1].avg)rk=i+1;it.rank=rk;});
-  sorted.forEach(s=>res[s.cls-1].rank=s.rank);
-  let h=`<tr><th>班級</th>`;ts.forEach(t=>h+=`<th>${t.replace('老師','').replace('主任','')}</th>`);h+=`<th>平均<br>滿分${totalMaxForGrade(g)}</th><th>名次</th><th>備註</th></tr>`;
-  res.forEach(r=>{const rc=r.rank<=3?` rank-${r.rank}`:'';h+=`<tr><td><strong>${r.cls}班</strong></td>`;r.tt.forEach(t=>h+=`<td>${t||'-'}</td>`);h+=`<td class="highlight">${r.avg.toFixed(1)}</td><td class="${rc}">${r.rank}</td>`;
-    const allNotes=[];ts.forEach(t=>{const n=aNotes[g]&&aNotes[g][t]&&aNotes[g][t][r.cls-1];if(n)allNotes.push(n);});
-    h+=`<td style="font-size:11px;color:#e74c3c;max-width:80px;white-space:normal">${allNotes.length?allNotes.join('；'):'-'}</td></tr>`;});
+  const sec=document.getElementById('aStatsSection'),g=aCurGrade,cnt=aClassCounts[g];
+  const results=Array.from({length:cnt},(_,i)=>({cls:i+1,...aggregateClass(g,i)}));
+  const complete=results.every(x=>x.complete);
+  const any=results.some(x=>x.total>0);
+  if(!any){sec.style.display='none';aRenderTop3([],0);return;}
+  sec.style.display='block';
+  const ranked=results.filter(x=>x.complete).sort((a,b)=>b.total-a.total);
+  ranked.forEach((x,i)=>x.rank=i&&x.total===ranked[i-1].total?ranked[i-1].rank:i+1);
+  aRenderTop3(complete?ranked.filter(x=>x.rank<=3).map(x=>({cls:x.cls,avg:x.total,judges:8,rank:x.rank})):[],totalMaxForGrade(g));
+  let h=`<tr><th colspan="4">${complete?'全部班級及項目已完成，可確認正式排名':'⚠️ 尚有未完成評分，暫不公布前三名或正式排名'}</th></tr><tr><th>班級</th><th>已完成項目得分</th><th>狀態</th><th>缺少評分</th></tr>`;
+  results.forEach(x=>{h+=`<tr><td>${x.cls}班</td><td>${x.total.toFixed(2)} / ${totalMaxForGrade(g)}</td><td>${x.complete?'完成，第'+x.rank+'名':'未完成'}</td><td style="white-space:normal;text-align:left;font-size:11px">${x.missing.join('、')||'-'}</td></tr>`;});
   document.getElementById('aStatsTable').innerHTML=h;
 }
 function getLiveTop3(g,cnt,ts){
-  const res=[];
-  for(let i=0;i<cnt;i++){
-    let sum=0,judges=0;
-    ts.forEach(t=>{
-      const s=aData[g][t]&&aData[g][t][i];
-      if(s&&hasAnyScore(s,g)){sum+=scoreTotal(s,g);judges++;}
-    });
-    if(judges>0)res.push({cls:i+1,avg:sum/judges,judges});
-  }
-  res.sort((a,b)=>b.avg-a.avg||b.judges-a.judges||a.cls-b.cls);
-  let rank=1;
-  res.forEach((it,i)=>{if(i>0&&it.avg<res[i-1].avg)rank=i+1;it.rank=rank;});
-  return res.filter(x=>x.rank<=3);
+  const rows=Array.from({length:cnt},(_,i)=>({cls:i+1,...aggregateClass(g,i)}));
+  if(rows.some(x=>!x.complete))return [];
+  rows.sort((a,b)=>b.total-a.total);
+  rows.forEach((x,i)=>x.rank=i&&x.total===rows[i-1].total?rows[i-1].rank:i+1);
+  return rows.filter(x=>x.rank<=3).map(x=>({cls:x.cls,avg:x.total,judges:8,rank:x.rank}));
 }
 function aRenderTop3(items,maxScore){
   const sec=document.getElementById('aTop3Section'),list=document.getElementById('aTop3List'),note=document.getElementById('aTop3Note');
-  if(!sec||!list||!note)return;
   if(!items.length){sec.style.display='none';list.innerHTML='';note.textContent='';return;}
-  sec.style.display='block';
-  note.textContent=`${aCurGrade}｜目前已輸入資料`;
-  list.innerHTML=items.map(x=>`<div class="podium-item"><div class="podium-rank r${Math.min(x.rank,3)}">${x.rank}</div><div><div class="podium-class">${x.cls}班</div><div class="podium-meta">納入 ${x.judges} 位評分委員${maxScore?`｜滿分 ${maxScore}`:''}</div></div><div class="podium-score">${x.avg.toFixed(1)}</div></div>`).join('');
+  sec.style.display='block';note.textContent=`${aCurGrade}｜完整評分後排名`;
+  list.innerHTML=items.map(x=>`<div class="podium-item"><div class="podium-rank r${Math.min(x.rank,3)}">${x.rank}</div><div class="podium-class">${x.cls}班</div><div class="podium-score">${x.avg.toFixed(2)} / ${maxScore}</div></div>`).join('');
 }
 function aGetText(grade){
-  const g=grade||aCurGrade,cnt=aClassCounts[g],ts=TEACHERS[g];
-  const res=[];for(let i=0;i<cnt;i++){const tt=[];ts.forEach(t=>{const s=aData[g][t][i];tt.push(scoreTotal(s,g));});res.push({cls:i+1,tt,avg:tt.reduce((a,b)=>a+b,0)/ts.length});}
-  const sorted=[...res].sort((a,b)=>b.avg-a.avg);let rk=1;sorted.forEach((it,i)=>{if(i>0&&it.avg<sorted[i-1].avg)rk=i+1;it.rank=rk;});
-  sorted.forEach(s=>res[s.cls-1].rank=s.rank);
-  let t=`📊 115學年度運動會\n${g} 晴天精神錦標評分統計（滿分${totalMaxForGrade(g)}）\n━━━━━━━━━━\n班級 | `;ts.forEach(tc=>t+=`${tc.replace('老師','').replace('主任','')} | `);t+=`平均 | 名次\n──────────\n`;
-  res.forEach(r=>{t+=`${r.cls}班 | `;r.tt.forEach(v=>t+=`${v} | `);t+=`${r.avg.toFixed(1)} | 第${r.rank}名\n`;});
-  const allNotes=[];for(let i=0;i<cnt;i++){const cn=[];ts.forEach(tc=>{const n=aNotes[g]&&aNotes[g][tc]&&aNotes[g][tc][i];if(n)cn.push(n);});if(cn.length)allNotes.push(`  ${i+1}班：${cn.join('；')}`);}
-  if(allNotes.length){t+=`━━━━━━━━━━\n⚠️ 違規備註：\n${allNotes.join('\n')}\n`;}
-  t+=`━━━━━━━━━━\n`;const now=new Date(),p=n=>String(n).padStart(2,'0');
-  t+=`統計時間：${now.getFullYear()}/${p(now.getMonth()+1)}/${p(now.getDate())} ${p(now.getHours())}:${p(now.getMinutes())}\n`;return t;
+  const g=grade||aCurGrade, rows=Array.from({length:aClassCounts[g]},(_,i)=>({cls:i+1,...aggregateClass(g,i)}));
+  const ready=rows.every(x=>x.complete);
+  const ranked=[...rows].filter(x=>x.complete).sort((a,b)=>b.total-a.total);
+  ranked.forEach((x,i)=>x.rank=i&&x.total===ranked[i-1].total?ranked[i-1].rank:i+1);
+  let t=`115學年度運動會 ${g} 精神總錦標（滿分${totalMaxForGrade(g)}）\n${ready?'全部評分完成':'尚未完成，不得作為正式名次'}\n`;
+  rows.forEach(x=>{t+=`${x.cls}班：${x.total.toFixed(2)}分｜${x.complete?'第'+x.rank+'名':'未完成：'+x.missing.join('、')}\n`;});
+  return t;
 }
 function aCopyStats(){doCopy(aGetText());}
 function shareLine(text){const t=encodeURIComponent(text);const isM=/iPhone|iPad|Android/i.test(navigator.userAgent);if(isM){window.location.href='line://msg/text/'+t;}else{window.open('https://social-plugins.line.me/lineit/share?url=&text='+t,'_blank');}}
