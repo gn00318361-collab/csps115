@@ -160,7 +160,7 @@
 
 <div class="header teacher-mode" id="mainHeader">
   <h1>115學年度運動會</h1>
-  <div class="sub">晴天精神錦標評分系統｜版本 2026-10-09-v4</div>
+  <div class="sub">晴天精神錦標評分系統｜版本 2026-10-09-v5</div>
 </div>
 
 <div class="container">
@@ -283,7 +283,7 @@
 <div class="toast" id="toast"></div>
 
 <script>
-const APP_VERSION="2026-10-09-v4";
+const APP_VERSION="2026-10-09-v5";
 // ===== Google Sheets 雲端同步 =====
 // 請將下方 URL 替換為你的 Google Apps Script 部署網址
 const API_URL = 'https://script.google.com/macros/s/AKfycbzt6H8J6rZ2ySSpk5sA3FLqYI3j3l_NEV_mjdGkeUliEVF4TPTBUJWBUjEtciVZ8YVpmA/exec';
@@ -700,40 +700,48 @@ function aSet(teacher,ci,key,el){
   const s=aData[aCurGrade][teacher][ci];el.closest('tr').querySelector('.row-total-admin').textContent=criteriaForTeacher(aCurGrade,teacher).reduce((sum,c)=>sum+scoreOf(s,c.key),0)||'-';
   aRenderTT();aRenderStats();saveLS();
 }
+// Provisional standings use the same completed criteria for every class.
+// Incomplete criteria never count as zero and never distort comparison.
+function standingsForGrade(g){
+  const cnt=aClassCounts[g];
+  const rows=Array.from({length:cnt},(_,i)=>({cls:i+1,...aggregateClass(g,i)}));
+  const keys=criteriaForGrade(g).map(c=>c.key);
+  const common=keys.filter(k=>rows.every(r=>Object.prototype.hasOwnProperty.call(r.parts,k)));
+  const ready=rows.every(r=>r.complete);
+  const comparable=common.length>0;
+  const ranked=comparable?rows.map(r=>({...r,comparableTotal:common.reduce((sum,k)=>sum+r.parts[k],0)})).sort((a,b)=>b.comparableTotal-a.comparableTotal||a.cls-b.cls):[];
+  ranked.forEach((r,i)=>r.rank=i&&Math.abs(r.comparableTotal-ranked[i-1].comparableTotal)<1e-9?ranked[i-1].rank:i+1);
+  return {rows,common,ready,ranked,comparable};
+}
 function aRenderStats(){
-  const sec=document.getElementById('aStatsSection'),g=aCurGrade,cnt=aClassCounts[g];
-  const results=Array.from({length:cnt},(_,i)=>({cls:i+1,...aggregateClass(g,i)}));
-  const complete=results.every(x=>x.complete);
-  const any=results.some(x=>x.total>0);
+  const sec=document.getElementById('aStatsSection'),g=aCurGrade;
+  const {rows,common,ready,ranked,comparable}=standingsForGrade(g);
+  const any=rows.some(r=>r.total>0);
   if(!any){sec.style.display='none';aRenderTop3([],0);return;}
   sec.style.display='block';
-  const ranked=results.filter(x=>x.complete).sort((a,b)=>b.total-a.total);
-  ranked.forEach((x,i)=>x.rank=i&&x.total===ranked[i-1].total?ranked[i-1].rank:i+1);
-  aRenderTop3(complete?ranked.filter(x=>x.rank<=3).map(x=>({cls:x.cls,avg:x.total,judges:8,rank:x.rank})):[],totalMaxForGrade(g));
-  let h=`<tr><th colspan="4">${complete?'全部班級及項目已完成，可確認正式排名':'⚠️ 尚有未完成評分，暫不公布前三名或正式排名'}</th></tr><tr><th>班級</th><th>已完成項目得分</th><th>狀態</th><th>缺少評分</th></tr>`;
-  results.forEach(x=>{h+=`<tr><td>${x.cls}班</td><td>${x.total.toFixed(2)} / ${totalMaxForGrade(g)}</td><td>${x.complete?'完成，第'+x.rank+'名':'未完成'}</td><td style="white-space:normal;text-align:left;font-size:11px">${x.missing.join('、')||'-'}</td></tr>`;});
+  const items=comparable?ranked.filter(x=>x.rank<=3).map(x=>({cls:x.cls,avg:x.comparableTotal,judges:8,rank:x.rank})):[];
+  aRenderTop3(items,common.length*MAX,ready,common.length,criteriaForGrade(g).length);
+  let h=`<tr><th colspan="4">${ready?'✅ 全部評分完成：正式排名':comparable?'⚠️ 暫定排名：僅比較各班共同完成的 '+common.length+' 項（共 '+criteriaForGrade(g).length+' 項）':'⚠️ 尚無所有班級共同完成的項目，暫時無法公平排名'}</th></tr>`;
+  h+='<tr><th>班級</th><th>已完成項目得分</th><th>狀態</th><th>缺少評分</th></tr>';
+  rows.forEach(x=>{const rank=ranked.find(r=>r.cls===x.cls)?.rank;h+=`<tr><td>${x.cls}班</td><td>${x.total.toFixed(2)} / ${totalMaxForGrade(g)}</td><td>${ready?'正式第'+rank+'名':rank?'暫定第'+rank+'名':'待補分'}</td><td style="white-space:normal;text-align:left;font-size:11px">${x.missing.join('、')||'-'}</td></tr>`;});
   document.getElementById('aStatsTable').innerHTML=h;
 }
 function getLiveTop3(g,cnt,ts){
-  const rows=Array.from({length:cnt},(_,i)=>({cls:i+1,...aggregateClass(g,i)}));
-  if(rows.some(x=>!x.complete))return [];
-  rows.sort((a,b)=>b.total-a.total);
-  rows.forEach((x,i)=>x.rank=i&&x.total===rows[i-1].total?rows[i-1].rank:i+1);
-  return rows.filter(x=>x.rank<=3).map(x=>({cls:x.cls,avg:x.total,judges:8,rank:x.rank}));
+  const {common,ranked}=standingsForGrade(g);
+  return common.length?ranked.filter(x=>x.rank<=3).map(x=>({cls:x.cls,avg:x.comparableTotal,judges:8,rank:x.rank})):[];
 }
-function aRenderTop3(items,maxScore){
+function aRenderTop3(items,maxScore,ready=false,completed=0,expected=0){
   const sec=document.getElementById('aTop3Section'),list=document.getElementById('aTop3List'),note=document.getElementById('aTop3Note');
   if(!items.length){sec.style.display='none';list.innerHTML='';note.textContent='';return;}
-  sec.style.display='block';note.textContent=`${aCurGrade}｜完整評分後排名`;
+  sec.style.display='block';
+  sec.querySelector('.top3-title').textContent=ready?'🏆 正式前三名':'🏆 暫定前三名';
+  note.textContent=ready?`${aCurGrade}｜全部項目完成`:`${aCurGrade}｜共同完成 ${completed}/${expected} 項；排名可能變動`;
   list.innerHTML=items.map(x=>`<div class="podium-item"><div class="podium-rank r${Math.min(x.rank,3)}">${x.rank}</div><div class="podium-class">${x.cls}班</div><div class="podium-score">${x.avg.toFixed(2)} / ${maxScore}</div></div>`).join('');
 }
 function aGetText(grade){
-  const g=grade||aCurGrade, rows=Array.from({length:aClassCounts[g]},(_,i)=>({cls:i+1,...aggregateClass(g,i)}));
-  const ready=rows.every(x=>x.complete);
-  const ranked=[...rows].filter(x=>x.complete).sort((a,b)=>b.total-a.total);
-  ranked.forEach((x,i)=>x.rank=i&&x.total===ranked[i-1].total?ranked[i-1].rank:i+1);
-  let t=`115學年度運動會 ${g} 精神總錦標（滿分${totalMaxForGrade(g)}）\n${ready?'全部評分完成':'尚未完成，不得作為正式名次'}\n`;
-  rows.forEach(x=>{t+=`${x.cls}班：${x.total.toFixed(2)}分｜${x.complete?'第'+x.rank+'名':'未完成：'+x.missing.join('、')}\n`;});
+  const g=grade||aCurGrade,{rows,common,ready,ranked}=standingsForGrade(g);
+  let t=`115學年度運動會 ${g} 精神總錦標（滿分${totalMaxForGrade(g)}）\n${ready?'正式排名':'暫定統計，僅比較各班共同完成 '+common.length+' 項，請勿作為正式名次'}\n`;
+  rows.forEach(x=>{const r=ranked.find(it=>it.cls===x.cls);t+=`${x.cls}班：已完成項目 ${x.total.toFixed(2)} 分｜${r?(ready?'正式':'暫定')+'第'+r.rank+'名':'無法比較'}${x.complete?'':'｜尚缺：'+x.missing.join('、')}\n`;});
   return t;
 }
 function aCopyStats(){doCopy(aGetText());}
