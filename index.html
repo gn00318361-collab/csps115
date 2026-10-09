@@ -283,7 +283,7 @@
 <div class="toast" id="toast"></div>
 
 <script>
-const APP_VERSION="2026-10-09-v5";
+const APP_VERSION="2026-10-09-v5.1-verify";
 // ===== Google Sheets 雲端同步 =====
 // 請將下方 URL 替換為你的 Google Apps Script 部署網址
 const API_URL = 'https://script.google.com/macros/s/AKfycbzt6H8J6rZ2ySSpk5sA3FLqYI3j3l_NEV_mjdGkeUliEVF4TPTBUJWBUjEtciVZ8YVpmA/exec';
@@ -348,9 +348,10 @@ async function cloudSubmit(grade, teacher, scores, notes) {
 }
 
 async function cloudLoad() {
-  if (!API_URL || API_URL === 'YOUR_GOOGLE_APPS_SCRIPT_URL') return;
+  if (!API_URL || API_URL === 'YOUR_GOOGLE_APPS_SCRIPT_URL') return false;
   try {
     const res = await fetch(API_URL + '?t=' + Date.now());
+    if (!res.ok) throw new Error('HTTP '+res.status);
     const json = await res.json();
     if (json.status === 'ok' && json.data) {
       GRADES.forEach(g => {
@@ -365,8 +366,10 @@ async function cloudLoad() {
       });
       saveLS();
       showToast('已從雲端載入資料');
+      return true;
     }
-  } catch (e) { console.log('雲端載入失敗', e); }
+    throw new Error('雲端資料格式異常');
+  } catch (e) { console.error('雲端載入失敗', e); return false; }
 }
 
 function toggleDetail(){
@@ -570,7 +573,8 @@ async function tSubmit(){
 
   tSaveActivityDraft();
 
-  await cloudLoad();
+  const loaded=await cloudLoad();
+  if(!loaded){alert('雲端讀取失敗，為避免覆蓋其他成績，本次停止送出。手機草稿仍保留，請稍後重試。');return;}
   if(!aData[tGrade])aData[tGrade]={};
   let merged=normalizeScores(aData[tGrade][tTeacher]||[],tClassCount);
   for(let i=0;i<tClassCount;i++){
@@ -595,12 +599,24 @@ async function tSubmit(){
 
   if(!ok) return;
 
+  // Confirm that the latest activity values are actually returned by the backend.
+  // Do not mark the activity as cloud-confirmed on a mismatch.
+  const verified=await cloudLoad();
+  const remoteRows=aData[tGrade]?.[tTeacher];
+  const matching=verified && Array.isArray(remoteRows) && remoteRows.length===tClassCount &&
+    remoteRows.every((row,i)=>Number(normalizeScoreRow(row)[tCriterion.key])===Number(tScores[i][tCriterion.key]));
+  if(!matching){
+    alert('⚠️ Google Sheet 寫入後驗證未通過！本次活動的分數仍保留在這支手機的草稿。請先截圖或複製分數，暫時不要重複送出，請管理者核對資料庫。');
+    return;
+  }
+
   aData[tGrade][tTeacher]=merged;
   aNotes[tGrade][tTeacher]=notes;
   aTimestamps[tGrade][tTeacher]=new Date().toLocaleString('zh-TW');
   saveLS();
 
   tRenderActivityPick();
+  showToast('✅ 已確認雲端資料一致');
   show('scrActivityPick');
 }
 
